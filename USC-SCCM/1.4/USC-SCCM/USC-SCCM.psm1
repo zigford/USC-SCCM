@@ -847,176 +847,184 @@ If ($PSBoundParameters.ContainsKey('ComputerName')) {
   }
 }
 
-function Invoke-WolServer {
-Param($ComputerName)
-}
-
 function Send-WOL {
-<#
-    .SYNOPSIS
-    Sends a WOL magic packet to wake a ConfigMgr client.
+    <#
+        .SYNOPSIS
+        Sends a WOL magic packet to wake a ConfigMgr client.
+        
+        .DESCRIPTION
+        Connect to the WMI namespace of the site server, retreives the MAC addresses of a specified ConfigMgr client and generates WOL packets for each of those MAC addresses.
+        
+        .PARAMETER ComputerName
+        The name of a ConfigMgr client, registered with the Site Server.
+        
+       .EXAMPLE
+        C:\PS>Send-WOL -ComputerName 6wmpsn1
+        Wake-On-Lan magic packet of length 102 sent to 00:50:56:C0:00:01
     
-    .DESCRIPTION
-    Connect to the WMI namespace of the site server, retreives the MAC addresses of a specified ConfigMgr client and generates WOL packets for each of those MAC addresses.
+        Wake-On-Lan magic packet of length 102 sent to 00:50:56:C0:00:08
     
-    .PARAMETER ComputerName
-    The name of a ConfigMgr client, registered with the Site Server.
+        Wake-On-Lan magic packet of length 102 sent to 1C:65:9D:98:8E:84
     
-   .EXAMPLE
-    C:\PS>Send-WOL -ComputerName 6wmpsn1
-	Wake-On-Lan magic packet of length 102 sent to 00:50:56:C0:00:01
-
-	Wake-On-Lan magic packet of length 102 sent to 00:50:56:C0:00:08
-
-	Wake-On-Lan magic packet of length 102 sent to 1C:65:9D:98:8E:84
-
-	Wake-On-Lan magic packet of length 102 sent to F0:4D:A2:59:80:4F
-	
-	.EXAMPLE
-	Get-CfgCollectionMembers -Collection "Lab DG40" | Send-WOL
-		Sends a WOL magic packet for MAC addresses of members of collection Lab DG40
-		
-    .NOTES
-    Author: Jesse Harris
-    For: University of Sunshine Coast
-    Date Created: 09 Jan 2012        
-    ChangeLog:
-    1.0 - First Release
-    1.1 - 10/04/2012 - Tests admin rights to bind on privlidged ports and sends wol on port 1230 and port 9
-#>
-param(
-      [CmdletBinding()]
-      [Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
-      [string[]]$ComputerName="$env:computername",
-      [switch]$Force,
-      [string]$Email,
-      [switch]$Unicast,
-      $SendFrom,
-      $Ports=9,
-      $CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer,$MacAddress)
-
-    PROCESS {
-        If (! (Test-CurrentAdminRights) ) { Write-Host -ForegroundColor Red "Please run as Admin"; return }
-        function Send-WolWorker {
-            Param($Name,$Port,$MacAddress,$From)
-            If (!$MacAddress) {
-                $MachineResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace Root\SMS\Site_$CfgSiteCode `
-                    -Query "Select MACAddresses from SMS_R_System Where SMS_R_System.Name = '$Name' AND SMS_R_System.Active = '1'"
-                If ( $MachineResults -eq $null ) { "No machine results returned"; return 0 }
-                Foreach ($MacAddresses in $MachineResults)
-                {
-                    If ( $MacAddresses.MacAddresses -eq $null ) { "No Mac addresses found for $Name"; return 0 }
-                    Foreach ($MacAddress in $MacAddresses.MacAddresses)
+        Wake-On-Lan magic packet of length 102 sent to F0:4D:A2:59:80:4F
+        
+        .EXAMPLE
+        Get-CfgCollectionMembers -Collection "Lab DG40" | Send-WOL
+            Sends a WOL magic packet for MAC addresses of members of collection Lab DG40
+            
+        .NOTES
+        Author: Jesse Harris
+        For: University of Sunshine Coast
+        Date Created: 09 Jan 2012        
+        ChangeLog:
+        1.0 - First Release
+        1.1 - 10/04/2012 - Tests admin rights to bind on privlidged ports and sends wol on port 1230 and port 9
+    #>
+    param(
+          [CmdletBinding()]
+          [Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
+          [string[]]$ComputerName="$env:computername",
+          $SendFrom,
+          [switch]$BroadCast,
+          $Ports=9,
+          $CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer,$MacAddress)
+    
+        PROCESS {
+            If (! (Test-CurrentAdminRights) ) { Write-Host -ForegroundColor Red "Please run as Admin"; return }
+            function Send-WolWorker {
+                Param($Name,$Port,$MacAddress,$From,[Switch]$BroadCast)
+                If (!$MacAddress) {
+                    $MachineResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace Root\SMS\Site_$CfgSiteCode `
+                        -Query "Select MACAddresses,IPAddresses from SMS_R_System Where SMS_R_System.Name = '$Name' AND SMS_R_System.Active = '1'"
+                    If ( $MachineResults -eq $null ) { "No machine results returned"; return 0 }
+                    Foreach ($MacAddresses in $MachineResults)
                     {
-                        $mac = $MacAddress.split(':') | %{ [byte]('0x' + $_) }
-                        $ScriptBlock = {Param($Port,$mac)
-                            $UDPclient = new-Object System.Net.Sockets.UdpClient
-                            $UDPclient.Connect(([System.Net.IPAddress]::Broadcast),$Port)
-                            $packet = [byte[]](,0xFF * 6)
-                            $packet += $mac * 16
-                            [void] $UDPclient.Send($packet, $packet.Length)
-                        }
-                        If ($From -ne $null) {
-                            Invoke-command -ComputerName $From -ScriptBlock $ScriptBlock -ArgumentList $Port,$mac
-                            Write-Verbose "Wake-On-Lan magic packet of length $($packet.Length) sent to port $Port on $MacAddress from $From`n"
-                        } else {
-                            Invoke-Command $ScriptBlock -ArgumentList $Port,$mac
-                            Write-Verbose "Wake-On-Lan magic packet of length $($packet.Length) sent to port $Port on $MacAddress from localhost`n"
+                        If ( $MacAddresses.MacAddresses -eq $null ) { "No Mac addresses found for $Name"; return 0 }
+                        Foreach ($MacAddress in $MacAddresses.MacAddresses)
+                        {
+                            If ($BroadCast) {
+                                $IPDests = '255.255.255.255'
+                            } Else {
+                                $IPDests = $MachineResults.IPAddresses
+                            }
+                            ForEach ($IPDest in $IPDests) {
+                                $ParsedIP = [System.Net.IPAddress]::Parse($IPDest)
+                                If ($ParsedIP.AddressFamily -eq 'InterNetwork') {
+                                    Write-Verbose "$($ParsedIP.IPAddressToString) detected as IPv4"
+                                    $mac = $MacAddress.split(':') | %{ [byte]('0x' + $_) }
+                                    $ScriptBlock = {
+                                        [CmdLetBinding()]
+                                        Param($Port,$mac,$ParsedIP,$VerbosePreference)
+                                        Write-Verbose "ParsedIP: $($ParsedIP.IPAddressToString)"
+                                        Write-Verbose "Port: $Port"
+                                        $packet = [byte[]](,0xFF * 6)
+                                        $packet += $mac * 16
+                                        Write-Verbose "Packet Len: $($packet.Length)"
+                                        $UDPclient = new-Object System.Net.Sockets.UdpClient
+                                        $UDPclient.Connect($ParsedIP,$Port)
+                                        [void] $UDPclient.Send($packet, $packet.Length)
+                                    }
+                                    If ($From -ne $null) {
+                                        Invoke-command -ComputerName $From -ScriptBlock $ScriptBlock -ArgumentList $Port,$mac,$ParsedIP,$VerbosePreference
+                                        Write-Verbose "Wake-On-Lan magic packet sent to port $Port on $MacAddress from $From as broadcast`n"
+                                    } else {
+                                        Invoke-Command $ScriptBlock -ArgumentList $Port,$mac,$ParsedIP,$VerbosePreference
+                                        Write-Verbose "Wake-On-Lan magic packet sent to port $Port on $MacAddress from localhost as unicast`n"
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-        function Send-FromTest {
-            Param($SendFrom)       
-            If ($SendFrom -and (Test-Connection -ComputerName $SendFrom -Count 1 -Quiet)) {
-                $WinRM = Get-Service -ComputerName $SendFrom -Name WinRM
-                If ($WinRM.Status -eq 'Stopped') {
-                    $WinRM.Start()
-                }
-                If (-Not (Test-WSMan -ComputerName $SendFrom -ErrorAction SilentlyContinue)) {
-                    Write-Error "WinRM not available, falling back to local wol"
-                    return $null
-                    
-                } Else {
-                    Return $SendFrom
-                }
-            }
-        }
-
-        If ($SendFrom) {
-            $WinRMHost = Send-FromTest -SendFrom $SendFrom
-        }
-
-        If ($PSBoundParameters.ContainsKey('ComputerName')) {
-              Foreach ($Computer in $ComputerName) {
-                ForEach ($Port in $Ports) {
-                    If ($Unicast) {
-                        #Get the IP Address/Subnet of a machine
-                        $IPOctets = ([System.Net.DNS]::GetHostByName($Computer)).AddressList.IPAddressToString.Split('.')
-                        $IPAddress = "$($IPOctets[0]).$($IPOctets[1]).$($IPOctets[2]).%"
-                        #Lets get a list of IP's on the same subnet that are awake
-                        $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPAddress)"""
-                        $WorkingMachine = $null
-                        $MachineIndex = 0
-                        While ($WorkingMachine -eq $null -and $MachineIndex -lt $MachinesOnSameIP.Count) {
-                        #ForEach ($Machine in $MachinesOnSameIP) {
-                            Write-Verbose "Testing $($MachinesOnSameIP[$MachineIndex].Name)"
-                            $WorkingMachine = Send-FromTest -SendFrom $MachinesOnSameIP[$MachineIndex].Name
-                            $MachineIndex++
-                        }
-                        If ($WorkingMachine) {
-                            Send-WolWorker -Name $Computer -Port $Port -From $WorkingMachine
-                        } Else {
-                            #no machines HAHAHAA
-                            Write-Verbose -Message "No Machines were found. soz"
-                        }
-                    } ElseIf ($Force) {
-                        $WriteFile = New-Item -Path \\wsp-configmgr01\WOL -Name "$($Computer).wol" -Value $Email -ItemType File -Force
-                        Write-Verbose -Message "Machine file written to wsp-configmgr01"
+            function Send-FromTest {
+                Param($SendFrom)       
+                If ($SendFrom -and (Test-Connection -ComputerName $SendFrom -Count 1 -Quiet)) {
+                    $WinRM = Get-Service -ComputerName $SendFrom -Name WinRM
+                    If ($WinRM.Status -eq 'Stopped') {
+                        $WinRM.Start()
+                    }
+                    If (-Not (Test-WSMan -ComputerName $SendFrom -ErrorAction SilentlyContinue)) {
+                        Write-Error "WinRM not available, falling back to local wol"
+                        return $null
+                        
                     } Else {
-                        Send-WolWorker -Name $Computer -Port $Port -From $WinRMHost
+                        Return $SendFrom
                     }
                 }
-              }
-	    } Else {
-            If ($MacAddress) {
-                ForEach ($Port in $Ports) {
-                    Send-WolWorker -MacAddress $MacAddress -Port $Port -From $WinRMHost
-                }
+            }
+    
+            If ($SendFrom) {
+                $WinRMHost = Send-FromTest -SendFrom $SendFrom
+            }
+    
+            If ($PSBoundParameters.ContainsKey('ComputerName')) {
+                  Foreach ($Computer in $ComputerName) {
+                    ForEach ($Port in $Ports) {
+                        If ($BroadCast) {
+                            #Get the IP Address/Subnet of a machine
+                            $IPOctets = ([System.Net.DNS]::GetHostByName($Computer)).AddressList.IPAddressToString.Split('.')
+                            $IPAddress = "$($IPOctets[0]).$($IPOctets[1]).$($IPOctets[2]).%"
+                            #Lets get a list of IP's on the same subnet that are awake
+                            $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPAddress)"""
+                            $WorkingMachine = $null
+                            $MachineIndex = 0
+                            While ($WorkingMachine -eq $null -and $MachineIndex -lt $MachinesOnSameIP.Count) {
+                            #ForEach ($Machine in $MachinesOnSameIP) {
+                                Write-Verbose "Testing $($MachinesOnSameIP[$MachineIndex].Name)"
+                                $WorkingMachine = Send-FromTest -SendFrom $MachinesOnSameIP[$MachineIndex].Name
+                                $MachineIndex++
+                            }
+                            If ($WorkingMachine) {
+                                Send-WolWorker -Name $Computer -Port $Port -From $WorkingMachine -BroadCast
+                            } Else {
+                                #no machines HAHAHAA
+                                Write-Verbose -Message "No Machines were found. soz"
+                            }
+                        } Else {
+                            Send-WolWorker -Name $Computer -Port $Port -From $WinRMHost
+                        }
+                    }
+                  }
             } Else {
-	            ForEach ($Port in $Ports) {
-                    If ($Unicast) {
-                        #Get the IP Address/Subnet of a machine
-                        $IPOctets = ([System.Net.DNS]::GetHostByName($ComputerName)).AddressList.IPAddressToString.Split('.')
-                        $IPAddress = "$($IPOctets[0]).$($IPOctets[1]).$($IPOctets[2]).%"
-                        #Lets get a list of IP's on the same subnet that are awake
-                        $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPAddress)"""
-                        $WorkingMachine = $null
-                        $MachineIndex = 0
-                        While ($WorkingMachine -eq $null -and $MachineIndex -lt $MachinesOnSameIP.Count) {
-                        #ForEach ($Machine in $MachinesOnSameIP) {
-                            Write-Verbose "Testing $($MachinesOnSameIP[$MachineIndex].Name)"
-                            $WorkingMachine = Send-FromTest -SendFrom $MachinesOnSameIP[$MachineIndex].Name
-                            $MachineIndex++
-                        }
-                        If ($WorkingMachine) {
-                            Send-WolWorker -Name $ComputerName -Port $Port -From $WorkingMachine
+                If ($MacAddress) {
+                    ForEach ($Port in $Ports) {
+                        Send-WolWorker -MacAddress $MacAddress -Port $Port -From $WinRMHost
+                    }
+                } Else {
+                    ForEach ($Port in $Ports) {
+                        If ($Unicast) {
+                            #Get the IP Address/Subnet of a machine
+                            $IPOctets = ([System.Net.DNS]::GetHostByName($ComputerName)).AddressList.IPAddressToString.Split('.')
+                            $IPAddress = "$($IPOctets[0]).$($IPOctets[1]).$($IPOctets[2]).%"
+                            #Lets get a list of IP's on the same subnet that are awake
+                            $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPAddress)"""
+                            $WorkingMachine = $null
+                            $MachineIndex = 0
+                            While ($WorkingMachine -eq $null -and $MachineIndex -lt $MachinesOnSameIP.Count) {
+                            #ForEach ($Machine in $MachinesOnSameIP) {
+                                Write-Verbose "Testing $($MachinesOnSameIP[$MachineIndex].Name)"
+                                $WorkingMachine = Send-FromTest -SendFrom $MachinesOnSameIP[$MachineIndex].Name
+                                $MachineIndex++
+                            }
+                            If ($WorkingMachine) {
+                                Send-WolWorker -Name $ComputerName -Port $Port -From $WorkingMachine
+                            } Else {
+                                #no machines HAHAHAA
+                                Write-Verbose -Message "No Machines were found. soz"
+                            }
+                        } ElseIf ($Force) {
+                            $WriteFile = New-Item -Path \\wsp-configmgr01\WOL -Name "$($ComputerName).wol" -Value $Email -ItemType File -Force
+                            Write-Verbose -Message "Machine file written to wsp-configmgr01"
                         } Else {
-                            #no machines HAHAHAA
-                            Write-Verbose -Message "No Machines were found. soz"
+                            Send-WolWorker -Name $ComputerName -Port $Port -From $WinRMHost
                         }
-                    } ElseIf ($Force) {
-                        $WriteFile = New-Item -Path \\wsp-configmgr01\WOL -Name "$($ComputerName).wol" -Value $Email -ItemType File -Force
-                        Write-Verbose -Message "Machine file written to wsp-configmgr01"
-                    } Else {
-                        Send-WolWorker -Name $ComputerName -Port $Port -From $WinRMHost
                     }
                 }
             }
         }
     }
-}
+    
 
 function Get-CfgIPAddress {
 <#

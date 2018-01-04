@@ -935,7 +935,7 @@ function Send-WOL {
                                 [void] $UDPclient.Send($packet, $packet.Length)
                             }
                             If ($From -ne $null) {
-                                Invoke-command -AsJob -ComputerName $From -ScriptBlock $ScriptBlock -ArgumentList $Port, $mac, $ParsedIP, $VerbosePreference
+                                Invoke-command -AsJob -ComputerName $From -ScriptBlock $ScriptBlock -ArgumentList $Port, $mac, $ParsedIP, $VerbosePreference > $Null
                                 Write-Verbose "Wake-On-Lan magic packet sent to port $Port on $Name $MacAddress from $From as broadcast`n"
                             }
                             else {
@@ -1005,6 +1005,19 @@ function Send-WOL {
             return $WorkingMachine   
         }
 
+        function Get-IPFromSCCM ($Computer) {
+            $Query = "Select IPAddresses from SMS_R_System Where SMS_R_System.Name = '$Computer' AND SMS_R_System.Active = '1'"
+            $IPResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace Root\SMS\Site_$CfgSiteCode -Query $Query
+            $IPV4Addr = ""
+            ForEach ($IPDest in $IPResults.ipaddresses) {
+                $ParsedIP = [System.Net.IPAddress]::Parse($IPDest)
+                If ($ParsedIP.AddressFamily -eq 'InterNetwork') {
+                    $IPV4Addr = $ParsedIP.IPAddressToString
+                }
+            }
+            Return $IPV4Addr
+        }
+
         # Main
         If (! (Test-CurrentAdminRights) ) { Write-Warning "Please run as Admin"; return }
 
@@ -1017,26 +1030,36 @@ function Send-WOL {
                 write-host "`nSending WOL to $Computer"
                 If ($BroadCast) {
                     #Get the IP Address/Subnet of a machine (assuming 24 bit netmask)
-                    $IPOctets = ([System.Net.DNS]::GetHostByName($Computer)).AddressList.IPAddressToString.Split('.')
+                    try {
+                        $IPOctets = @()
+                        $IPOctets = ([System.Net.DNS]::GetHostByName($Computer)).AddressList.IPAddressToString.Split('.')
+                    } catch {
+                        Write-Verbose "DNS unable to resolve $Computer."
+                        $IPV4Addr = Get-IPFromSCCM($Computer)
+                        If ($IPV4Addr) {
+                            write-verbose "SCCM has IPv4 address of $IPV4Addr recorded for $Computer"
+                            $IPOctets = $IPV4Addr -split "\."
+                        } else {
+                            write-verbose "SCCM also has no recorded IPv4 address for $Computer. I give up on this one."
+                            Continue
+                        }
+                    }
                     $IPSubnet = "$($IPOctets[0]).$($IPOctets[1]).$($IPOctets[2]).%"
                     $Proxy = Get-WOLProxyOnSubnet($IPSubnet)
                     If ($Proxy) {
                         ForEach ($Port in $Ports) {
                             Send-WolWorker -Name $Computer -Port $Port -From $Proxy -BroadCast
                         }
-                    }
-                    Else {
+                    } Else {
                         Write-Verbose -Message "No usable machines on same subnet were found to forward WOL. soz."
                     }
-                }
-                Else {
+                } Else {
                     ForEach ($Port in $Ports) {
                         Send-WolWorker -Name $Computer -Port $Port -From $WinRMHost
                     }
                 }
             }
-        }
-        Else {
+        } Else {
             # Probs can be removed
             ForEach ($Port in $Ports) {
                 If ($MacAddress) {
@@ -1048,8 +1071,7 @@ function Send-WOL {
             }
         }
     }
-}
-    
+}   
 
 function Get-CfgIPAddress {
 <#

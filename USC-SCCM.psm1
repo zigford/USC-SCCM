@@ -881,149 +881,174 @@ function Send-WOL {
         1.1 - 10/04/2012 - Tests admin rights to bind on privlidged ports and sends wol on port 1230 and port 9
     #>
     param(
-          [CmdletBinding()]
-          [Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
-          [string[]]$ComputerName="$env:computername",
-          $SendFrom,
-          [switch]$BroadCast,
-          $Ports=9,
-          $CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer,$MacAddress)
-    
-        PROCESS {
-            If (! (Test-CurrentAdminRights) ) { Write-Host -ForegroundColor Red "Please run as Admin"; return }
-            function Send-WolWorker {
-                Param($Name,$Port,$MacAddress,$From,[Switch]$BroadCast)
-                If (!$MacAddress) {
-                    $MachineResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace Root\SMS\Site_$CfgSiteCode `
-                        -Query "Select MACAddresses,IPAddresses from SMS_R_System Where SMS_R_System.Name = '$Name' AND SMS_R_System.Active = '1'"
-                    If ( $MachineResults -eq $null ) { "No machine results returned"; return 0 }
-                    Foreach ($MacAddresses in $MachineResults)
-                    {
-                        If ( $MacAddresses.MacAddresses -eq $null ) { "No Mac addresses found for $Name"; return 0 }
-                        Foreach ($MacAddress in $MacAddresses.MacAddresses)
-                        {
-                            If ($BroadCast) {
-                                $IPDests = '255.255.255.255'
-                            } Else {
-                                $IPDests = $MachineResults.IPAddresses
-                            }
-                            ForEach ($IPDest in $IPDests) {
-                                $ParsedIP = [System.Net.IPAddress]::Parse($IPDest)
-                                If ($ParsedIP.AddressFamily -eq 'InterNetwork') {
-                                    Write-Verbose "$($ParsedIP.IPAddressToString) detected as IPv4"
-                                    $mac = $MacAddress.split(':') | %{ [byte]('0x' + $_) }
-                                    $ScriptBlock = {
-                                        [CmdLetBinding()]
-                                        Param($Port,$mac,$ParsedIP,$VerbosePreference)
-                                        Write-Verbose "ParsedIP: $($ParsedIP.IPAddressToString)"
-                                        Write-Verbose "Port: $Port"
-                                        $packet = [byte[]](,0xFF * 6)
-                                        $packet += $mac * 16
-                                        Write-Verbose "Packet Len: $($packet.Length)"
-                                        $UDPclient = new-Object System.Net.Sockets.UdpClient
-                                        $UDPclient.Connect($ParsedIP,$Port)
-                                        [void] $UDPclient.Send($packet, $packet.Length)
-                                    }
-                                    If ($From -ne $null) {
-                                        Invoke-command -ComputerName $From -ScriptBlock $ScriptBlock -ArgumentList $Port,$mac,$ParsedIP,$VerbosePreference
-                                        Write-Verbose "Wake-On-Lan magic packet sent to port $Port on $MacAddress from $From as broadcast`n"
-                                    } else {
-                                        Invoke-Command $ScriptBlock -ArgumentList $Port,$mac,$ParsedIP,$VerbosePreference
-                                        Write-Verbose "Wake-On-Lan magic packet sent to port $Port on $MacAddress from localhost as unicast`n"
-                                    }
-                                }
-                            }
-                        }
-                    }
+        [CmdletBinding()]
+        [Parameter(ValueFromPipeline = $True, ValueFromPipelinebyPropertyName = $True)]
+        [string[]]$ComputerName = "$env:computername",
+        $SendFrom,
+        [switch]$BroadCast,
+        $Ports = 9,
+        $CfgSiteCode = $Global:CfgSiteCode, $CfgSiteServer = $Global:CfgSiteServer, $MacAddress)
+
+    BEGIN {
+        $Proxies = @{}
+    }
+    PROCESS {
+        function Send-WolWorker {
+            Param($Name, $Port, $MacAddress, $From, [Switch]$BroadCast)
+            $BroadcastString = if ($Broadcast) { "Broadcast"} else {"Unicast"}
+            $FromString = if ($From) { "From $From" } else { "From this machine" }
+            write-verbose "Initiating WOL - $FromString To: $Name Port: $Port $Broadcaststring"
+            $Query = "Select MACAddresses,IPAddresses from SMS_R_System Where SMS_R_System.Name = '$Name' AND SMS_R_System.Active = '1'"
+            $MachineResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace Root\SMS\Site_$CfgSiteCode -Query $Query
+            If ( $MachineResults -eq $null ) {
+                write-warning "No SCCM info returned for machine $Name"
+                return 0
+            }
+            Foreach ($MachineResult in $MachineResults) {
+                If ( $MachineResult.MacAddresses -eq $null ) {
+                    write-warning "No Mac addresses found for $Name"
+                    return 0
                 }
-            }
-            function Send-FromTest {
-                Param($SendFrom)       
-                If ($SendFrom -and (Test-Connection -ComputerName $SendFrom -Count 1 -Quiet)) {
-                    $WinRM = Get-Service -ComputerName $SendFrom -Name WinRM
-                    If ($WinRM.Status -eq 'Stopped') {
-                        $WinRM.Start()
+                Foreach ($MacAddress in $MachineResult.MacAddresses) {
+                    If ($BroadCast) {
+                        $IPDests = '255.255.255.255'
                     }
-                    If (-Not (Test-WSMan -ComputerName $SendFrom -ErrorAction SilentlyContinue)) {
-                        Write-Error "WinRM not available, falling back to local wol"
-                        return $null
-                        
-                    } Else {
-                        Return $SendFrom
+                    Else {
+                        $IPDests = $MachineResults.IPAddresses
                     }
-                }
-            }
-    
-            If ($SendFrom) {
-                $WinRMHost = Send-FromTest -SendFrom $SendFrom
-            }
-    
-            If ($PSBoundParameters.ContainsKey('ComputerName')) {
-                  Foreach ($Computer in $ComputerName) {
-                    ForEach ($Port in $Ports) {
-                        If ($BroadCast) {
-                            #Get the IP Address/Subnet of a machine
-                            $IPOctets = ([System.Net.DNS]::GetHostByName($Computer)).AddressList.IPAddressToString.Split('.')
-                            $IPAddress = "$($IPOctets[0]).$($IPOctets[1]).$($IPOctets[2]).%"
-                            #Lets get a list of IP's on the same subnet that are awake
-                            $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPAddress)"""
-                            $WorkingMachine = $null
-                            $MachineIndex = 0
-                            While ($WorkingMachine -eq $null -and $MachineIndex -lt $MachinesOnSameIP.Count) {
-                            #ForEach ($Machine in $MachinesOnSameIP) {
-                                Write-Verbose "Testing $($MachinesOnSameIP[$MachineIndex].Name)"
-                                $WorkingMachine = Send-FromTest -SendFrom $MachinesOnSameIP[$MachineIndex].Name
-                                $MachineIndex++
+
+                    ForEach ($IPDest in $IPDests) {
+                        $ParsedIP = [System.Net.IPAddress]::Parse($IPDest)
+                        If ($ParsedIP.AddressFamily -eq 'InterNetwork') {
+                            Write-Verbose "$($ParsedIP.IPAddressToString) detected as IPv4"
+                            $mac = $MacAddress.split(':') | % { [byte]('0x' + $_) }
+                            $ScriptBlock = {
+                                [CmdLetBinding()]
+                                Param($Port, $mac, $ParsedIP, $VerbosePreference)
+                                Write-Verbose "Parsed IP: $($ParsedIP.IPAddressToString)"
+                                Write-Verbose "Port: $Port"
+                                $packet = [byte[]](, 0xFF * 6)
+                                $packet += $mac * 16
+                                Write-Verbose "Packet Len: $($packet.Length)"
+                                $UDPclient = new-Object System.Net.Sockets.UdpClient
+                                $UDPclient.Connect($ParsedIP, $Port)
+                                [void] $UDPclient.Send($packet, $packet.Length)
                             }
-                            If ($WorkingMachine) {
-                                Send-WolWorker -Name $Computer -Port $Port -From $WorkingMachine -BroadCast
-                            } Else {
-                                #no machines HAHAHAA
-                                Write-Verbose -Message "No Machines were found. soz"
+                            If ($From -ne $null) {
+                                Invoke-command -AsJob -ComputerName $From -ScriptBlock $ScriptBlock -ArgumentList $Port, $mac, $ParsedIP, $VerbosePreference
+                                Write-Verbose "Wake-On-Lan magic packet sent to port $Port on $Name $MacAddress from $From as broadcast`n"
                             }
-                        } Else {
-                            Send-WolWorker -Name $Computer -Port $Port -From $WinRMHost
-                        }
-                    }
-                  }
-            } Else {
-                If ($MacAddress) {
-                    ForEach ($Port in $Ports) {
-                        Send-WolWorker -MacAddress $MacAddress -Port $Port -From $WinRMHost
-                    }
-                } Else {
-                    ForEach ($Port in $Ports) {
-                        If ($Unicast) {
-                            #Get the IP Address/Subnet of a machine
-                            $IPOctets = ([System.Net.DNS]::GetHostByName($ComputerName)).AddressList.IPAddressToString.Split('.')
-                            $IPAddress = "$($IPOctets[0]).$($IPOctets[1]).$($IPOctets[2]).%"
-                            #Lets get a list of IP's on the same subnet that are awake
-                            $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPAddress)"""
-                            $WorkingMachine = $null
-                            $MachineIndex = 0
-                            While ($WorkingMachine -eq $null -and $MachineIndex -lt $MachinesOnSameIP.Count) {
-                            #ForEach ($Machine in $MachinesOnSameIP) {
-                                Write-Verbose "Testing $($MachinesOnSameIP[$MachineIndex].Name)"
-                                $WorkingMachine = Send-FromTest -SendFrom $MachinesOnSameIP[$MachineIndex].Name
-                                $MachineIndex++
+                            else {
+                                Invoke-Command $ScriptBlock -ArgumentList $Port, $mac, $ParsedIP, $VerbosePreference
+                                Write-Verbose "Wake-On-Lan magic packet sent to port $Port on $Name $MacAddress from localhost as unicast`n"
                             }
-                            If ($WorkingMachine) {
-                                Send-WolWorker -Name $ComputerName -Port $Port -From $WorkingMachine
-                            } Else {
-                                #no machines HAHAHAA
-                                Write-Verbose -Message "No Machines were found. soz"
-                            }
-                        } ElseIf ($Force) {
-                            $WriteFile = New-Item -Path \\wsp-configmgr01\WOL -Name "$($ComputerName).wol" -Value $Email -ItemType File -Force
-                            Write-Verbose -Message "Machine file written to wsp-configmgr01"
-                        } Else {
-                            Send-WolWorker -Name $ComputerName -Port $Port -From $WinRMHost
                         }
                     }
                 }
             }
         }
+        function Test-SendFrom($SendFrom) {
+            If (-not ($SendFrom -and (Test-Connection -ComputerName $SendFrom -Count 1 -Quiet))) {
+                Write-Verbose "Neighbour $SendFrom down"
+                return $null
+            }
+
+            $WinRM = Get-Service -ComputerName $SendFrom -Name WinRM
+
+            If ($WinRM.Status -eq 'Stopped') { $WinRM.Start() }
+
+            If (Test-WSMan -ComputerName $SendFrom -ErrorAction SilentlyContinue) {
+                Return $SendFrom
+            }
+            Else {
+                Write-Warning "Neighbour $SendFrom unable to use WinRM"
+                return $null
+            }
+        }
+
+        function Find-WOLProxyOnSubnet($IPSubnet) {
+            # Get a machine on $IPSubnet that can be used to send WOL via WinRM
+            $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPSubnet)"""
+            # $MachinesOnSameIP = $MachinesOnSameIP.Name | Test-Pingable | ? { $_.Up }
+            $MachinesOnSameIP = $MachinesOnSameIP.Name
+            $WorkingMachine = $null
+            Foreach ($Machine in $MachinesOnSameIP) {
+                # Write-Verbose "Testing $Machine.."
+                $WorkingMachine = Test-SendFrom -SendFrom $Machine
+                if ($WorkingMachine) {
+                    Write-Verbose "Can send from $WorkingMachine"
+                    break
+                }
+            }
+            return $WorkingMachine   
+        }
+
+        function Get-WOLProxyOnSubnet($IPSubnet) {
+            # Memoizing wrapper for Find-WOLProxyOnSubnet()
+            if ($Proxies[$IPSubnet].Scanned) {
+                write-Verbose "$IPSubnet scanned already"
+                $WorkingMachine = $Proxies[$IPSubnet].WorkingMachine
+
+                # Double check it still works
+                if (Test-SendFrom($WorkingMachine)) {
+                    return $WorkingMachine
+                    # Otherwise we will rescan subnet again :-(
+                }
+            }
+
+            write-verbose "Scanning $IPSubnet to find neighbour machine to send broadcast WOL"
+            $WorkingMachine = Find-WOLProxyOnSubnet($IPSubnet)
+            $Proxies[$IPSubnet] = [PSCustomObject]@{
+                Scanned        = $True
+                WorkingMachine = $WorkingMachine
+            }                
+            return $WorkingMachine   
+        }
+
+        # Main
+        If (! (Test-CurrentAdminRights) ) { Write-Warning "Please run as Admin"; return }
+
+        If ($SendFrom) {
+            $WinRMHost = Test=SendFrom -SendFrom $SendFrom
+        }
+
+        If ($PSBoundParameters.ContainsKey('ComputerName')) {
+            Foreach ($Computer in $ComputerName) {
+                write-host "`nSending WOL to $Computer"
+                If ($BroadCast) {
+                    #Get the IP Address/Subnet of a machine (assuming 24 bit netmask)
+                    $IPOctets = ([System.Net.DNS]::GetHostByName($Computer)).AddressList.IPAddressToString.Split('.')
+                    $IPSubnet = "$($IPOctets[0]).$($IPOctets[1]).$($IPOctets[2]).%"
+                    $Proxy = Get-WOLProxyOnSubnet($IPSubnet)
+                    If ($Proxy) {
+                        ForEach ($Port in $Ports) {
+                            Send-WolWorker -Name $Computer -Port $Port -From $Proxy -BroadCast
+                        }
+                    }
+                    Else {
+                        Write-Verbose -Message "No usable machines on same subnet were found to forward WOL. soz."
+                    }
+                }
+                Else {
+                    ForEach ($Port in $Ports) {
+                        Send-WolWorker -Name $Computer -Port $Port -From $WinRMHost
+                    }
+                }
+            }
+        }
+        Else {
+            # Probs can be removed
+            ForEach ($Port in $Ports) {
+                If ($MacAddress) {
+                    Send-WolWorker -MacAddress $MacAddress -Port $Port -From $WinRMHost
+                }
+                Else {
+                    Send-WolWorker -Name $ComputerName -Port $Port -From $WinRMHost
+                }
+            }
+        }
     }
+}
     
 
 function Get-CfgIPAddress {

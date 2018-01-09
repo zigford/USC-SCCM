@@ -1027,7 +1027,7 @@ function Send-WOL {
 
         If ($PSBoundParameters.ContainsKey('ComputerName')) {
             Foreach ($Computer in $ComputerName) {
-                write-host "`nSending WOL to $Computer"
+                #write-host "`nSending WOL to $Computer"
                 If ($BroadCast) {
                     #Get the IP Address/Subnet of a machine (assuming 24 bit netmask)
                     try {

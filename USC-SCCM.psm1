@@ -776,7 +776,7 @@ function Get-CfgMachineVariables {
         .NOTES
             Author : Jesse Harris
             Website: github.com\zigford
-            Version 1.0
+            Version 1.1 - 25/01/2018 - Added collection precedence property
     #>
   [CmdletBinding()]
 
@@ -805,6 +805,7 @@ PROCESS {
                     'Name' = $Var.Name
                     'Value' = $Var.Value
                     'Source' = $Name
+                    'Precedence' = 0
                 }
             }
          
@@ -825,6 +826,7 @@ PROCESS {
                             'Name' = $Var.Name
                             'Value' = $Var.Value
                             'Source' = $_.CollectionName
+                            'Precedence' = $QueryResult.CollectionVariablePrecedence
                         }
                     }
                 }
@@ -1323,8 +1325,12 @@ If ($PSBoundParameters.ContainsKey('ComputerName')) {
   }
 }
 
-New-Alias -Name ginv -Value Get-CfgClientInventory -Scope Global
-New-Alias -Name gip -Value Get-CfgIPAddress -Scope Global
+if (-Not (Get-Alias -Name ginv -ErrorAction SilentlyContinue)) {
+    New-Alias -Name ginv -Value Get-CfgClientInventory -Scope Global
+}
+if (-Not (Get-Alias -Name gip -ErrorAction SilentlyContinue)) {
+    New-Alias -Name gip -Value Get-CfgIPAddress -Scope Global
+}
 
 function Get-RecentMachines {
     Param($CollectionName,$AgentTimeSpan)

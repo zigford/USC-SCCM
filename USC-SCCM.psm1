@@ -1120,7 +1120,7 @@ function Send-WOL {
         If (! (Test-CurrentAdminRights) ) { Write-Warning "Please run as Admin"; return }
 
         If ($SendFrom) {
-            $WinRMHost = Test=SendFrom -SendFrom $SendFrom
+            $WinRMHost = Test-SendFrom -SendFrom $SendFrom
         }
 
         If ($PSBoundParameters.ContainsKey('ComputerName')) {

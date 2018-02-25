@@ -12,7 +12,21 @@
 function Import-CfgGlobalVars {
 [CmdLetBinding()]
 Param()
-    $VarFile = "$env:LOCALAPPDATA\USC-SCCM\Vars.xml"
+    if ($PSVersionTable.OS -match 'Linux') {
+        $VarFile = Join-Path -Path $env:HOME -ChildPath ".local/USC-SCCM/Vars.xml"
+        $Unix = $True
+        If (-not $Global:CfgUserName) {
+            $Global:CfgUserName = Read-Host -Prompt "Enter your username if on Unix"
+        }
+        If (-Not $Global:CfgPassword) {
+            $Global:CfgPassword = Read-Host -Prompt "Enter your password if in Unix"
+        }
+        If (-Not $Global:CfgDomain) {
+            $Global:CfgDomain = Read-Host -Prompt "Enter your domain name if on unix"
+        }
+    } else {
+        $VarFile = "$env:LOCALAPPDATA\USC-SCCM\Vars.xml"
+    }
     #Try import SCCM SiteCode and SiteServer
     If (Test-Path $VarFile) {
         Import-Clixml -Path $VarFile | %{ Set-Variable $_.Name $_.Value -Scope Global }

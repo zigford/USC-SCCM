@@ -352,6 +352,102 @@ Param($ComputerName=$env:ComputerName)
     $Cache
 }
 
+function Get-CMCacheInfo {
+    $OUIResource = New-Object -ComObject UIResource.UIResourceMgr
+    $OUIResource.GetCacheInfo()
+}
+
+function Clear-CMCache {
+    <#
+    .SYNOPSIS
+    Connects to the Config Manager client via Com object and requests cache deletion on items with a reference count of 0.
+    
+    .DESCRIPTION
+    Connects to a PC using WinRM and invokes a script to cleanup cache items which are no longer in use by the client.
+    
+    .PARAMETER ComputerName
+    The hostname of a computer to connect to. If omitted, works on the local host if there are sufficient rights.
+    
+   .EXAMPLE
+    C:\PS>Get-CfgCollectionMembers | Clear-CMCache -Verbose
+    
+    VERBOSE: Attempting connection to SME-TEST02
+    VERBOSE: Invoking Scriptblock
+    VERBOSE: Getting cache object
+    VERBOSE: Cache Location C:\WINDOWS\ccmcache\2s has 0 references. Deleting..
+    VERBOSE: Cache Location C:\WINDOWS\ccmcache\2u has 0 references. Deleting..
+    VERBOSE: Cache Location C:\WINDOWS\ccmcache\2v has 0 references. Deleting..
+    VERBOSE: Cache Location C:\WINDOWS\ccmcache\2x cannot be removed as it has 1 reference.
+
+    .NOTES
+    Author: Jesse Harris
+    For: University of Sunshine Coast
+    Date Created: 05 Feb 2018        
+    ChangeLog:
+    1.0 - First Release
+#>
+    [CmdletBinding()]
+    Param(
+        [Parameter(
+            ValueFromPipeline=$True,
+            ValueFromPipelineByPropertyName=$True
+        )]$ComputerName)
+    Begin {
+        $ScriptBlock = {
+            [CmdletBinding()]
+            Param($VerbosePreference)
+
+            #$VerbosePreference = 'Continue'
+            function Get-CMCacheInfo {
+                [CmdLetBinding()]
+                Param()
+
+                $OUIResource = New-Object -ComObject UIResource.UIResourceMgr
+                $OUIResource.GetCacheInfo()
+            }
+            Write-Verbose "Getting cache object"
+            $Cache = Get-CMCacheInfo
+            ForEach ($CacheObj in $Cache.GetCacheElements()) {
+                Switch ($CacheObj.ReferenceCount) {
+                    {$_ -gt 1} { Write-Verbose "Cache Location $($CacheObj.Location) cannot be removed as it has $($CacheObj.ReferenceCount) references." }
+                    1 { Write-Verbose "Cache Location $($CacheObj.Location) cannot be removed as it has 1 reference." }
+                    Default {
+                        Write-Verbose "Cache Location $($CacheObj.Location) has 0 references. Deleting.."
+                        Try {
+                            $Cache.DeleteCacheElement($CacheObj.CacheElementId)
+                        } Catch {
+                            Write-Warning "Failed to remove cache location"
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $ComputerName.ComputerName
+        }
+        If ($ComputerName) {
+            Write-Verbose "Attempting connection to $ComputerName"
+            If (-Not (Test-Connection -ComputerName $ComputerName -Count 1 -TimeToLive 7 -Quiet)) {
+                Write-Error "Device $ComputerName not online"
+            } else {
+                $WinRM = Get-Service -ComputerName $ComputerName -Name WinRM
+                If ($WinRM.Status -eq 'Stopped') { $WinRM.Start() }
+                If (-Not (Test-WSMan -ComputerName $ComputerName)) {
+                    Write-Error 'Unable to connect to WinRM service'
+                } else {
+                    Write-Verbose "Invoking Scriptblock"
+                    Invoke-Command -ComputerName $ComputerName -ScriptBlock $ScriptBlock -ArgumentList $VerbosePreference
+                }
+            }
+        } else {
+            Invoke-Command -ScriptBlock $ScriptBlock -ArgumentList $VerbosePreference
+        }
+    }
+}
+
 function Set-CfgCacheSize {
 [CmdletBinding()]
 Param($ComputerName=$env:ComputerName,$Size=25000,[Switch]$Percentage)
@@ -776,7 +872,7 @@ function Get-CfgMachineVariables {
         .NOTES
             Author : Jesse Harris
             Website: github.com\zigford
-            Version 1.0
+            Version 1.1 - 25/01/2018 - Added collection precedence property
     #>
   [CmdletBinding()]
 
@@ -805,6 +901,7 @@ PROCESS {
                     'Name' = $Var.Name
                     'Value' = $Var.Value
                     'Source' = $Name
+                    'Precedence' = 0
                 }
             }
          
@@ -825,6 +922,7 @@ PROCESS {
                             'Name' = $Var.Name
                             'Value' = $Var.Value
                             'Source' = $_.CollectionName
+                            'Precedence' = $QueryResult.CollectionVariablePrecedence
                         }
                     }
                 }
@@ -1022,12 +1120,12 @@ function Send-WOL {
         If (! (Test-CurrentAdminRights) ) { Write-Warning "Please run as Admin"; return }
 
         If ($SendFrom) {
-            $WinRMHost = Test=SendFrom -SendFrom $SendFrom
+            $WinRMHost = Test-SendFrom -SendFrom $SendFrom
         }
 
         If ($PSBoundParameters.ContainsKey('ComputerName')) {
             Foreach ($Computer in $ComputerName) {
-                write-host "`nSending WOL to $Computer"
+                #write-host "`nSending WOL to $Computer"
                 If ($BroadCast) {
                     #Get the IP Address/Subnet of a machine (assuming 24 bit netmask)
                     try {
@@ -1323,8 +1421,12 @@ If ($PSBoundParameters.ContainsKey('ComputerName')) {
   }
 }
 
-New-Alias -Name ginv -Value Get-CfgClientInventory -Scope Global
-New-Alias -Name gip -Value Get-CfgIPAddress -Scope Global
+if (-Not (Get-Alias -Name ginv -ErrorAction SilentlyContinue)) {
+    New-Alias -Name ginv -Value Get-CfgClientInventory -Scope Global
+}
+if (-Not (Get-Alias -Name gip -ErrorAction SilentlyContinue)) {
+    New-Alias -Name gip -Value Get-CfgIPAddress -Scope Global
+}
 
 function Get-RecentMachines {
     Param($CollectionName,$AgentTimeSpan)

@@ -6,6 +6,7 @@ function Get-WmiObject {
     )
 
     begin{
+        #$DebugPreference = 'Continue'
         if ($Query -and $ClassName) {
             Write-Error "Query and ClassName parameters are mutually exclusive"
             throw;
@@ -37,6 +38,7 @@ function Get-WmiObject {
     }
     process{
         $wmibin = '/bin/wmic'
+        $Query = $Query.Replace('"','''')
         $wmiargs = "--user '$Domain/$UserName%$Password' --namespace=$Namespace //$ComputerName ""$Query"""
         Write-Debug "executing wmic with args: $wmiargs"
         #$Out = Start-Process -FilePath $wmibin -ArgumentList $wmiargs 

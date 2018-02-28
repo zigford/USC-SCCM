@@ -1067,8 +1067,10 @@ function Send-WOL {
         function Find-WOLProxyOnSubnet($IPSubnet) {
             # Get a machine on $IPSubnet that can be used to send WOL via WinRM
             $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPSubnet)"""
-            # $MachinesOnSameIP = $MachinesOnSameIP.Name | Test-Pingable | ? { $_.Up }
-            $MachinesOnSameIP = $MachinesOnSameIP.Name
+            $TotalCountMachinesOnSameIP = $MachinesOnSameIP.Count
+            $MachinesOnSameIP = $MachinesOnSameIP.Name | Test-Pingable | ? { $_.Up }
+            $MachinesOnSameIP = $MachinesOnSameIP.ComputerName
+            write-verbose "Found $($MachinesOnSameIP.Count) pingable computers out of $TotalCountMachinesOnSameIP neighbours"
             $WorkingMachine = $null
             Foreach ($Machine in $MachinesOnSameIP) {
                 # Write-Verbose "Testing $Machine.."
@@ -1169,7 +1171,52 @@ function Send-WOL {
             }
         }
     }
-}   
+}
+
+function Test-Pingable {
+    <#
+    .SYNOPSIS
+    Parallel pingerer. Promptly pings a plethora of pooters in parallel. Returns a list of computers and whether they are up or not.
+    
+    .PARAMETER ComputerName
+    Computer name to ping
+
+    .EXAMPLE
+    Test-pingable PC12ABC
+    Get-CfgCollectionMembers "Lab DG35" | Test-Pingable
+    
+    .NOTES
+    Author: Darryl Rees
+    Date Created: 24 November 2017     
+    ChangeLog:
+    #>
+
+    Param (
+        [Alias("Name","Computer")][Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)][string[]]$ComputerName
+    )
+
+    Begin {
+        $jobs=@()
+        $Computers=@()
+    }
+    Process {
+        $NumPings = 3
+        $jobs = $jobs + (test-connection $ComputerName -count $NumPings -asjob)
+        $Computers = $Computers + $ComputerName
+    }
+    End {
+        $pingresults = $jobs | receive-job -wait | select address, responsetime | group -ashash -asstring address
+        # Now put back into the original order they were passed, and
+        # check to see if a single echo/ping request returned with a non-null responsetime
+        Foreach ($Computer in $Computers) {
+            [PSCustomObject]@{
+                ComputerName = $Computer
+                Up = (($PingResults.$Computer | measure-object -property responsetime -maximum).maximum -ne $Null)
+            }
+        }
+    }
+}
+
 
 function Get-CfgIPAddress {
 <#

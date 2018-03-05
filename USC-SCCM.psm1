@@ -680,6 +680,9 @@ function Send-CfgMachineUpdateTrigger {
     
     .PARAMETER ComputerName
     The name of a ConfigMgr client, registered with the Site Server.
+
+    .PARAMETER Force
+    Send a hard policy reset prior to a regular machine policy evlauation cyle
     
    .EXAMPLE
     C:\PS>Send-CfgMachineUpdateTrigger -ComputerName 9k9562s
@@ -701,17 +704,36 @@ function Send-CfgMachineUpdateTrigger {
 
       Param(
       [Parameter(Mandatory=$true,ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
-      [string[]]$ComputerName)
+      [string[]]$ComputerName,
+      [switch]$Force,
+      [switch]$Confirm=$True)
 PROCESS {
 
 	function SendMachineUpdate-Worker {
 		Param($sName)
 		$SCCMClient = [WMIClass]"\\$sName\Root\CCM:SMS_Client"
-		Write-Host "Downloading Policy for $sName"
+        If ($Force) {
+            If ($Confirm) {
+                While ($ans -notin 'y','n') {
+                    $ans = Read-Host -Prompt "Using the force parameter will cause a full machine policy reset. Are you sure you wish to continue ? (y/n)"
+                }
+                If ($ans -eq 'y') {
+                    $AllowReset = $True
+                }
+            } else {
+                $AllowReset = $True
+            }
+            If ($AllowReset) {
+                Write-Verbose "Forcing policy reset"
+                $SCCMClient.ResetPolicy(1)
+                $SCCMClient.psbase.InvokeMethod("TriggerSchedule", "{00000000-0000-0000-0000-000000000040}")
+            }
+        }
+		Write-Verbose "Downloading Policy for $sName"
 		Try {$SCCMClient.psbase.InvokeMethod("TriggerSchedule", "{00000000-0000-0000-0000-000000000021}") }
 		Catch { "An Error occured" }
 		Start-Sleep -Seconds 2
-		Write-Host "Evaluating Policy for $sName"
+		Write-Verbose "Evaluating Policy for $sName"
 		Try {$SCCMClient.psbase.InvokeMethod("TriggerSchedule", "{00000000-0000-0000-0000-000000000022}") }
 		Catch { "An Error occured" }
 	}

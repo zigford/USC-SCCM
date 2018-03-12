@@ -1141,9 +1141,10 @@ function Send-WOL {
         }
 
         # Main
-        # Admin rights is only relevant for local packets. Skip admin check if Broadcast is specified
-        If (! (Test-CurrentAdminRights) -and (! $BroadCast -or ! $SendFrom)) { Write-Warning "Please run as Admin"; return }
-
+        If (! $BroadCast -and ! $SendFrom){
+            # Admin rights is only relevant for local packets. Skip admin check if Broadcast is specified
+            if (! (Test-CurrentAdminRights)) { Write-Warning "Please run as Admin"; return }
+        }
         If ($SendFrom) {
             $WinRMHost = Test-SendFrom -SendFrom $SendFrom
         }

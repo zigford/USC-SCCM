@@ -109,6 +109,9 @@ function Get-CfgClientInventory {
     
     .PARAMETER ComputerName
     The name of a ConfigMgr client, registered with the Site Server. The percent symbol can be used inplace as a wildcard.
+
+    .PARAMETER PrimaryUser
+    If the PrimaryUser parameter is used, a search will be performed for the ConfigMgr clients where the Resource is linked to the Primary user. The percent symbol can be used inplace as a wildcard.
 	
 	.PARAMETER UserName
 	If the UserName parameter is used, a search will be performed for ConfigMgr clients where the username matches LastLogonUserName. The percent symbol can be used inplace as a wildcard.
@@ -158,6 +161,15 @@ function Get-CfgClientInventory {
 	fe80::b83a:7f75:cfcc:47fb
 	fe80::fda2:bc20:ea38:6c80
 
+    .EXAMPLE
+    C:\PS>Get-CfgClientInventory -PrimaryUser '%jpharris' -Properties PrimaryUser
+
+    ComputerName  LastLogonUserName IPAddresses     PrimaryUser
+    ------------  ----------------- -----------     -----------
+    049660345053  slawford          {10.205.80.33}  {USC\AdminJPHarris, usc\lgoldsbo, USC\slaw
+    WSP-LICENSE01                   {10.104.0.191}  {usc\adminjpharris, usc\adminlgoldsbo
+
+
     .NOTES
     Author: Jesse Harris
     For: University of Sunshine Coast
@@ -165,27 +177,55 @@ function Get-CfgClientInventory {
     ChangeLog:
     1.0 - First Release
     1.1 - 10/04/2012 - Modified default properties and docs
-#>
-  [CmdletBinding()]
+    1.2 - 19/04/2018 - Added PrimaryUser property and search on primary user
 
-      Param(
-      [Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
-      [string[]]$ComputerName="$env:computername",$UserName,
-      $CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer,$Properties,[Switch]$ExtendedData)
+    .LINKS
+    https://github.com/zigford/USC-SCCM
+#>
+  [CmdletBinding(DefaultParameterSetName="Computer")]
+
+    Param(
+        [Parameter(
+            ValueFromPipeline=$True,
+            ValueFromPipelinebyPropertyName=$True,
+            ParameterSetName="Computer")]
+        [Parameter(
+            Position = 0    
+        )]
+        [string[]]$ComputerName="$env:computername",
+        [Parameter(
+            ParameterSetName="User"
+        )]
+        [string]$UserName,
+        [Parameter(
+            ParameterSetName="PrimaryUser"
+        )]
+        $PrimaryUser,
+        $CfgSiteCode=$Global:CfgSiteCode,
+        $CfgSiteServer=$Global:CfgSiteServer,
+        $Properties,
+        [Switch]$ExtendedData
+    )
 PROCESS {
 
       function CfgClientInventory-Worker {
-        Param($Name,$User)
+        Param($Name,$User,$PrimaryUser)
         #Set Default Object properties
         $defaultProperties = @('ComputerName','LastLogonUserName', 'IPAddresses')
 
         If ($Name -ne $null) {
-		$Query = "Select * from SMS_R_System Where Name like '$Name'"
-        } ElseIf ($UserName -ne $null) {
-        $Query = "Select * from SMS_R_System Where LastLogonUserName like '$User'"
+            $Query = "Select * from SMS_R_System Where Name like '$Name'"
+            $QueryResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $Query
+        } ElseIf ($User) {
+            $Query = "Select * from SMS_R_System Where LastLogonUserName like '$User'"
+            $QueryResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $Query
+        } elseif ($PrimaryUser) {
+            $UDAQuery = "Select * from SMS_UserMachineRelationship Where UniqueUserName like '$PrimaryUser'"
+            $UDAResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $UDAQuery
+            $QueryResults = $UDAResults | ForEach-Object {
+                Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query "Select * from SMS_R_System Where ResourceID = '$($_.ResourceID)'"
+            }
         }
-        $QueryResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" `
-            -Query $Query
         Foreach ($Result in $QueryResults) {
             $MonitorRes = $null
             $MonitorCount = $null
@@ -201,6 +241,14 @@ PROCESS {
                     $Result | Add-Member -MemberType NoteProperty -Name Model -Value (Get-WMIObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $ModelQuery).Model
                     $defaultProperties += "Model"
                     }
+                PrimaryUser {
+                    $PrimaryUserQuery = 'Select * from SMS_UserMachineRelationship Where ResourceID = "' + $Result.ResourceID + '"'
+                    $UDAData = Get-WMIObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $PrimaryUserQuery
+                    If ($UDAData) {
+                        $Result | Add-Member -MemberType NoteProperty -Name PrimaryUser -Value $UDAData.UniqueUserName
+                        $defaultProperties += "PrimaryUser"
+                    }
+                }
                 Monitor {
                     $MonitorQuery = 'Select * from SMS_G_System_DESKTOP_MONITOR Where ResourceID = "' + $Result.ResourceID + '"'
                     $MonitorData = (Get-WMIObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $MonitorQuery)
@@ -269,8 +317,10 @@ PROCESS {
         
       }
 
-    If ($UserName -ne $null) { 
+    If ($UserName) { 
         CfgClientInventory-Worker -User $UserName
+    } Elseif ($PrimaryUser) {
+        CfgClientInventory-Worker -PrimaryUser $PrimaryUser
     } Else {
         If ($PSBoundParameters.ContainsKey('ComputerName')) {
             Foreach ($Computer in $ComputerName) {

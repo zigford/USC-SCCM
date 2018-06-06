@@ -2287,3 +2287,46 @@ function Get-CfgEvalStateDescription {
         28 {'Waiting for network connectivity.'}
     }
 }
+
+function Get-CfgApplicationState {
+    [CmdLetBinding()]
+    Param(
+        [Parameter(
+            Mandatory=$True,
+            ValueFromPipeline=$True,
+            ValueFromPipelineByPropertyName=$True)]$ComputerName=$env:computername,
+        $AppName
+    )
+    
+        Begin {
+            $defaultProperties = @('ComputerName','AppName','InstallState','State')
+            $defaultDisplayPropertySet = 
+                New-Object System.Management.Automation.PSPropertySet(
+                    'DefaultDisplayPropertySet',[string[]]$defaultProperties)
+            $PSStandardMembers = 
+                [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
+        }
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $Computer.ComputerName
+        }
+        $WinRMState = Set-CfgService -ComputerName $ComputerName -Name WinRM
+        $AppObj = Get-CimInstance -ComputerName $ComputerName `
+            -NameSpace root\ccm\ClientSDK -Query $Query
+        if ($AppName) {
+            $AppObj = $AppObj | Where-Object { $psItem.FullName -match $AppName }
+        }
+        $AppObj | ForEach-Object {
+            $psItem | Add-Member `
+                -MemberType NoteProperty `
+                -Name State `
+                -Value (Get-CfgEvalStateDescription $psItem.EvaluationState) 
+            $psItem | Add-Member `
+                -MemberType MemberSet `
+                -Name PSStandardMembers $PSStandardMembers `
+                -PassThru
+        }
+
+    }
+}

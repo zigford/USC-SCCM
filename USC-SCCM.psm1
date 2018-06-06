@@ -2220,3 +2220,33 @@ function Invoke-CfgStateMessageSend {
         }
     }
 }
+
+function Set-CfgService {
+    [CmdLetBinding()]
+    Param($ComputerName=$env:ComputerName,$Name,
+    $Previous)
+    
+    Switch ($Name) {
+        rw {$s = 'WinRM'}
+        rr {$s = 'RemoteRegistry'}
+        cm {$s = 'CCMExec'}
+        Default {$s = $Name}
+    }
+
+    $Result = $null
+    $Svc = Get-Service -ComputerName $ComputerName -Name $s
+    If ($Previous -eq 'Disabled') {
+            $Svc | Stop-Service
+            $Svc | Set-Service -StartUpType 'Disabled'
+    ElseIf ($Previous -eq 'Stopped') {
+            $Svc | Stop-Service
+        }
+    } Else {
+        Switch ($Svc.Status) {
+            'Running' {$Svc | Restart-Service}
+            'Stopped' {If ($Svc.StartType -eq 'Disabled') {$Result='Disabled'; $Svc | Set-Service -StartUpType Manual} Else {$Result='Stopped'}; $Svc | Start-Service}
+            Default {}
+        }
+    }
+    return $Result
+}

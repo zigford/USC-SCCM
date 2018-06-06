@@ -42,7 +42,28 @@ Param()
     }
 }
 
-Import-CfgGlobalVars
+function Connect-CfgSiteServer {
+    <#
+    .SYNOPSIS
+        Setup global vars for other USC-SCCM module commandlets
+    .DESCRIPTION
+        Attempt to import global variables for other USC-SCCM module cmdlets, and if they don't exists, or the server cannot be contacted, prompt for input.
+    .EXAMPLE
+        Connect-CfgSiteServer
+
+        Enter your site server hostname: 
+    .NOTES
+        Author: Jesse Harris
+        Date: 01/06/2018
+    .LINK
+        https://github.com/zigford/USC-SCCM
+    #>
+    [CmdLetBinding()]
+    Param()
+
+    Import-CfgGlobalVars
+
+}
 
 function Test-CurrentAdminRights {
     #Return $True if process has admin rights, otherwise $False

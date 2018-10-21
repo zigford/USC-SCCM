@@ -79,6 +79,15 @@ function Connect-CfgSiteServer {
 
 }
 
+function Test-CfgGlobalVars {
+    [CmdLetBinding()]
+    Param()
+
+    If (-Not $Global:CfgSiteCode -and -Not $Global:CfgSiteServer) {
+        Write-Error "Please connect to site server with Connect-CfgSiteServer"
+    }
+}
+
 function Test-CurrentAdminRights {
     #Return $True if process has admin rights, otherwise $False
     $user = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -117,8 +126,11 @@ Param(
                ValueFromPipelinebyPropertyName = $True)]
                [ValidateNotNullOrEmpty()]
                [String[]]
-               $Collection,$CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer, $Property
-               )
+               $Collection, $Property
+)
+    
+Test-CfgGlobalVars -ErrorAction Stop
+    
 $Collections = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query `
     "Select * from SMS_Collection Where Name like '$Collection'"
 ForEach ( $Col in $Collections ) {
@@ -236,11 +248,14 @@ function Get-CfgClientInventory {
             ParameterSetName="PrimaryUser"
         )]
         $PrimaryUser,
-        $CfgSiteCode=$Global:CfgSiteCode,
-        $CfgSiteServer=$Global:CfgSiteServer,
         $Properties,
         [Switch]$ExtendedData
     )
+
+BEGIN {
+    Test-CfgGlobalVars -ErrorAction Stop
+}
+
 PROCESS {
 
       function CfgClientInventory-Worker {
@@ -399,7 +414,10 @@ function Test-CfgCollectionMembers {
     ChangeLog:
     1.0 - First Release
 #>
-Param($Collection, $CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer,$TTL=2)
+Param($Collection, $TTL=2)
+
+Test-CfgGlobalVars -ErrorAction Stop
+
 Get-CfgCollectionMembers -Collection $Collection | `
   ForEach-Object { 
         $TestConn = Test-Connection -TimeToLive $TTL -ComputerName $_.ComputerName -Count 1 -ErrorAction SilentlyContinue
@@ -899,8 +917,8 @@ function Get-CfgCollections {
             .PARAMETER  ResourceName 
                 Specify the name of your member : username or computername
             .EXAMPLE 
-                Get-Collections -Type computer -ResourceName PC001
-                Get-Collections -Type user -ResourceName User01
+                Get-CfgCollections -Type computer -ResourceName PC001
+                Get-CfgCollections -Type user -ResourceName User01
             .Notes 
                 Author : Antoine DELRUE 
                 Edited : Jesse Harris
@@ -913,10 +931,10 @@ function Get-CfgCollections {
     [string]$type="Computer",
 
     [Parameter(Mandatory=$true,Position=1)]
-    [string]$ResourceName,
-    $CfgSiteServer=$Global:CfgSiteServer,
-    $CfgSiteCode=$Global:CfgSiteCode
+    [string]$ResourceName
     ) #end param
+
+    Test-CfgGlobalVars -ErrorAction Stop
 
     Switch ($type)
         {
@@ -987,7 +1005,11 @@ function Get-CfgMachineVariables {
       [Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
       [string[]]$ComputerName="$env:computername",
       [Switch]$IncludeCollections,
-      $CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer,$Property)
+      $Property)
+
+BEGIN {
+    Test-CfgGlobalVars -ErrorAction Stop
+}
 PROCESS {
 
       function CfgClientInventory-Worker {
@@ -1092,9 +1114,10 @@ function Send-WOL {
         $SendFrom,
         [switch]$BroadCast,
         $Ports = 9,
-        $CfgSiteCode = $Global:CfgSiteCode, $CfgSiteServer = $Global:CfgSiteServer, $MacAddress)
+        $MacAddress)
 
     BEGIN {
+        Test-CfgGlobalVars -ErrorAction Stop
         $Proxies = @{}
     }
     PROCESS {
@@ -1362,8 +1385,10 @@ function Get-CfgIPAddress {
 #>
 param(
       [Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
-      [string[]]$ComputerName="$env:computername",
-      $CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer)
+      [string[]]$ComputerName="$env:computername")
+BEGIN{
+    Test-CfgGlobalVars -ErrorAction Stop 
+}
 PROCESS {
     
     function Get-CfgIPWorker {
@@ -1644,8 +1669,10 @@ function Get-AdvertisementResult {
 		ValueFromPipeline=$True,
 		ValueFromPipelineByPropertyName=$true,
 		Mandatory=$true)]$ComputerName,
-		$AdvertID,
-		$CfgSiteServer=$Global:CfgSiteServer,$CfgSiteCode=$Global:CfgSiteCode)
+		$AdvertID)
+    Begin {
+        Test-CfgGlobalVars -ErrorAction Stop
+    }
 	Process {
 		If ($ComputerName.ComputerName) {
 			$Name = $ComputerName.ComputerName
@@ -1733,10 +1760,10 @@ function Get-MachineInventory {
 		ValueFromPipeline=$True,
 		ValueFromPipelineByPropertyName=$true,
 		Mandatory=$true)]$ComputerName,
-		$AdvertID,
-		$CfgSiteServer=$Global:CfgSiteServer,$CfgSiteCode=$Global:CfgSiteCode)
+		$AdvertID)
 
     Begin {
+        Test-CfgGlobalVars -ErrorAction Stop
         #Check if SCCM Module is available and loaded
         #Write-Host -ForegroundColor Cyan "Checking modules..."
         $Modules = "ActiveDirectory","USC-SCCM","USC-DellWarranty","Import-Excel","USC-VLAN"
@@ -1859,7 +1886,10 @@ function Get-AdvertisementStatus {
 		ValueFromPipeline=$True,
 		ValueFromPipelineByPropertyName=$true,
 		Mandatory=$true)]$AdvertID="USC20746",
-		$CfgSiteServer=$Global:CfgSiteServer,$CfgSiteCode=$Global:CfgSiteCode,$State)
+		$State)
+    Begin {
+        Test-CfgGlobalVars -ErrorAction Stop
+    }
 	Process {
             switch ($State) {
                 Failed {
@@ -2140,7 +2170,8 @@ function Get-CfgCollectionsByFolder {
     1.0 - First Release
 #>
 [CmdLetBinding()]
-Param([Parameter(Mandatory=$True)]$FolderName,$CfgSiteServer=$Global:CfgSiteServer,$CfgSiteCode=$Global:CfgSiteCode,[switch]$UserCollection)
+Param([Parameter(Mandatory=$True)]$FolderName,[switch]$UserCollection)
+    Test-CfgGlobalVars -ErrorAction Stop
     
     If ($UserCollection) {
         $objectType = 'SMS_Collection_User'
@@ -2205,7 +2236,8 @@ function Get-CfgCollectionsDeps {
     1.0 - First Release
 #>
 [CmdLetBinding()]
-Param([Parameter(Mandatory=$True)]$CollectionName,$CfgSiteServer=$Global:CfgSiteServer,$CfgSiteCode=$Global:CfgSiteCode)
+Param([Parameter(Mandatory=$True)]$CollectionName)
+    Test-CfgGlobalVars -ErrorAction Stop
     
     $CollectionID = (Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$CfgSiteCode" -Query "Select CollectionID from SMS_Collection Where Name = '$CollectionName'").CollectionID
     If (-Not $CollectionID) {

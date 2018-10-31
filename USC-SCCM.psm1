@@ -2094,74 +2094,200 @@ function Get-CfgConfigEval {
     }
 }
 
-function Get-CfgCollectionsByFolder {
+Function Get-CfgItemsByFolder {
 <#
-    .SYNOPSIS
-    Get Collections based on their administrative assigned folder.
+    .Synopsis
+    Get objects based on their administrative assigned folder.
     
-    .DESCRIPTION
-    Connects to the primary site server, and returns collections which are contained in a folder.
+    .Description
+    Connects to the primary site server, and returns items which are contained in a folder.
     
-    .PARAMETER FolderName
-    The name of a folder containing device collections.
+    .Parameter FolderName
+    The name of a folder containing objects. If not specified, a list of folders is returned.
 
-    .PARAMETER SiteServer
-    The hostname of the primary site server.
-    
-   .EXAMPLE
-    C:\PS>Get-CfgCollectionsByFolder -FolderName 'Software Distribution'
+    .Parameter ItemType
+    Specify the type of item to return folders for.
+
+   .Example
+    C:\PS> Get-CfgItemsByFolder -FolderName 'software distribution' -ItemType DeviceCollection
     
     FolderName            CollectionName                                         CollectionID LimitingCollection
     ----------            --------------                                         ------------ ------------------
-    Software Distribution Adobe Presenter 8 MSI WKS-Install                      SC100014     All Systems
-    Software Distribution Adobe Presenter 8 MSI WKS-Uninstall                    SC100015     All Systems
-    Software Distribution ClimSystems TrainClim 2.0.0.31 MSI WKS                 SC100019     All Systems
-    Software Distribution ClimSystems TrainClim 2.0.0.31 MSI WKS-Install         SC10001A     ClimSystems TrainClim 2.0.0.31 MS..
-    Software Distribution ClimSystems TrainClim 2.0.0.31 MSI WKS-Uninstall       SC10001B     All Systems
-    Software Distribution Google Google Chrome 23.0.1271.97 MSI WKS              SC10001C     All Systems
-    Software Distribution Google Google Chrome 23.0.1271.97 MSI WKS-Install      SC10001D     Google Google Chrome 23.0.1271.97..
+    software distribution adobe presenter 8 msi wks-install                      sc100014     all systems
+    software distribution adobe presenter 8 msi wks-uninstall                    sc100015     all systems
+    software distribution climsystems trainclim 2.0.0.31 msi wks                 sc100019     all systems
+    software distribution climsystems trainclim 2.0.0.31 msi wks-install         sc10001a     climsystems trainclim 2.0.0.31 ms..
+    software distribution climsystems trainclim 2.0.0.31 msi wks-uninstall       sc10001b     all systems
+    software distribution google google chrome 23.0.1271.97 msi wks              sc10001c     all systems
+    software distribution google google chrome 23.0.1271.97 msi wks-install      sc10001d     google google chrome 23.0.1271.97..
 	
-    .EXAMPLE
-	C:\PS>Get-CfgCollectionsByFolder -FolderName 'Software Distribution' | ? LimitingCollection -eq "All USC Managed Computers" | %{Set-CMDeviceCollection -CollectionId $_.CollectionID -LimitToCollectionID SC100030
+    .Example
+	C:\PS> Get-CfgItemsByFolder -foldername 'software distribution' | ? limitingcollection -eq "all usc managed computers" | %{set-cmdevicecollection -collectionid $_.collectionid -limittocollectionid sc100030
 
-    This command will retrieve all collections under the 'Software Distribution' folder which are currently limited to collection name 'All USC Managed Computers' and limit them to 'All USC Non-Volatile Computers'
+    this command will retrieve all collections under the 'software distribution' folder which are currently limited to collection name 'all usc managed computers' and limit them to 'all usc non-volatile computers'
 		
-    .EXAMPLE
-    C:\PS>Get-CfgCollectionsByFolder -FolderName 'Software Distribution' -UserCollection
+    .Example
+    c:\ps> Get-CfgItemsbyFolder -foldername 'software distribution' -ItemType UserCollection
 
-    This command will retrieve user collections by user foldername.
+    this command will retrieve user collections by user foldername.
 
-    .NOTES
-    Some of the examples in this help, depend on the official Configuration Manager module
-    Author: Jesse Harris
-    For: University of Sunshine Coast
-    Date Created: 17 May 2016
-    ChangeLog:
-    1.0 - First Release
+    .Example
+    C:\PS> Get-CfgItemsByFolder -ItemType TaskSequence
+
+    FolderName
+    ----------
+    Production
+    Firmware Updates
+    Retired
+    Utility
+    Backups
+    Kiosks
+    Development
+
+    .notes
+    some of the examples in this help, depend on the official configuration manager module
+    author: jesse harris
+    for: university of sunshine coast
+    date created: 17 may 2016
+    changelog:
+    1.0 - first release
+    2.0 - 31/10/2018, revamp to support more than collections.
 #>
-[CmdLetBinding()]
-Param([Parameter(Mandatory=$True)]$FolderName,$CfgSiteServer=$Global:CfgSiteServer,$CfgSiteCode=$Global:CfgSiteCode,[switch]$UserCollection)
+[cmdletbinding()]
+param([ValidateSet(
+    "Package",
+    "DeviceCollection",
+    "UserCollection",
+    "Application",
+    "TaskSequence",
+    "Query",
+    "ConfigurationBaseline",
+    "ConfigurationItem",
+    "MeteringRule"
+     )]
+    [Parameter(Mandatory=$True)]$ItemType,
+    $FolderName,
+    $CfgSiteServer=$global:CfgSiteServer,$CfgSiteCode=$global:CfgSiteCode
+    )
+    $NS = "root\sms\site_$CfgSiteCode"
     
-    If ($UserCollection) {
-        $objectType = 'SMS_Collection_User'
-    } Else {
-        $objectType = 'SMS_Collection_Device'
+    $objecttype = Switch ($ItemType) {
+        "Package" { "SMS_Package" }
+        "DeviceCollection" { "SMS_Collection_Device" }
+        "UserCollection" { "SMS_Collection_User" }
+        "Application" { "SMS_ApplicationLatest" }
+        "TaskSequence" { "SMS_TaskSequencePackage" }
+        "Query" { "SMS_Query" }
+        "ConfigurationBaseline" { "SMS_ConfigurationBaselineInfo" }
+        "ConfigurationItem" { "SMS_ConfigurationItemLatest" }
+        "MeteringRule" { "SMS_MeteredProductRule" }
     }
 
-    $InstanceKey = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_SC1" -Query "Select * from SMS_ObjectContainerNode Where objectTypeName = '$objectType'" | Where-Object {$_.Name -eq $FolderName}
+    $q = "select * from sms_objectcontainernode where objecttypename = '$objecttype'"
+    If ($FolderName) {
+        $InstanceKey = Get-WmiObject -ComputerName $CfgSiteServer -NameSpace $NS -query $q |
+        Where-Object {$_.Name -eq $FolderName}
+    } else {
+        Get-WmiObject -ComputerName $CfgSiteServer -NameSpace $NS -query $q |
+        Select-Object -Property @{Name='FolderName';expression={$_.Name}}
+    }
+
     If (-Not $InstanceKey) {
-        Write-Error -Category ObjectNotFound -Message "No Configuration manager folder named $FolderName could be found"
+        #Write-Error -Category objectnotfound -Message "No configuration manager folder could be found"
+        return
+    }
+
+    $q = "select * from sms_objectcontaineritem where containernodeid = "
+    $q += "'$($instancekey.containernodeid)'" 
+    Get-WmiObject -ComputerName $CfgSiteServer -NameSpace $NS -Query $q | ForEach-Object {
+        If ($ItemType -match 'collection') {
+            $q = "select * from SMS_Collection where CollectionID = ""$($_.instancekey)"""
+            Get-WmiObject -ComputerName $CfgSiteServer -Namespace $NS -Query $q |
+            ForEach-Object {
+                [pscustomobject]@{
+                    'foldername' = $foldername; 
+                    'collectionname' = $_.name;
+                    'collectionid' = $_.collectionid
+                    'limitingcollection' = $_.limittocollectionname
+                }
+            }
+        } else {
+            [PSCustomObject]@{
+                'FolderName' = $FolderName
+                'ObjectID' = $_.InstanceKey
+            }
+        }
+    }
+}
+
+function get-cfgcollectionsbyfolder {
+<#
+    .synopsis
+    get collections based on their administrative assigned folder.
+    
+    .description
+    connects to the primary site server, and returns collections which are contained in a folder.
+    
+    .parameter foldername
+    the name of a folder containing device collections.
+
+    .parameter siteserver
+    the hostname of the primary site server.
+    
+   .example
+    c:\ps>get-cfgcollectionsbyfolder -foldername 'software distribution'
+    
+    foldername            collectionname                                         collectionid limitingcollection
+    ----------            --------------                                         ------------ ------------------
+    software distribution adobe presenter 8 msi wks-install                      sc100014     all systems
+    software distribution adobe presenter 8 msi wks-uninstall                    sc100015     all systems
+    software distribution climsystems trainclim 2.0.0.31 msi wks                 sc100019     all systems
+    software distribution climsystems trainclim 2.0.0.31 msi wks-install         sc10001a     climsystems trainclim 2.0.0.31 ms..
+    software distribution climsystems trainclim 2.0.0.31 msi wks-uninstall       sc10001b     all systems
+    software distribution google google chrome 23.0.1271.97 msi wks              sc10001c     all systems
+    software distribution google google chrome 23.0.1271.97 msi wks-install      sc10001d     google google chrome 23.0.1271.97..
+	
+    .example
+	c:\ps>get-cfgcollectionsbyfolder -foldername 'software distribution' | ? limitingcollection -eq "all usc managed computers" | %{set-cmdevicecollection -collectionid $_.collectionid -limittocollectionid sc100030
+
+    this command will retrieve all collections under the 'software distribution' folder which are currently limited to collection name 'all usc managed computers' and limit them to 'all usc non-volatile computers'
+		
+    .example
+    c:\ps>get-cfgcollectionsbyfolder -foldername 'software distribution' -usercollection
+
+    this command will retrieve user collections by user foldername.
+
+    .notes
+    some of the examples in this help, depend on the official configuration manager module
+    author: jesse harris
+    for: university of sunshine coast
+    date created: 17 may 2016
+    changelog:
+    1.0 - first release
+#>
+[cmdletbinding()]
+param([parameter(mandatory=$true)]$foldername,$cfgsiteserver=$global:cfgsiteserver,$cfgsitecode=$global:cfgsitecode,[switch]$usercollection)
+    
+    if ($usercollection) {
+        $objecttype = 'sms_collection_user'
+    } else {
+        $objecttype = 'sms_collection_device'
+    }
+
+    $instancekey = get-wmiobject -computername $cfgsiteserver -namespace "root\sms\site_sc1" -query "select * from sms_objectcontainernode where objecttypename = '$objecttype'" | where-object {$_.name -eq $foldername}
+    if (-not $instancekey) {
+        write-error -category objectnotfound -message "no configuration manager folder named $foldername could be found"
         return
     }
 
 
-    Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$CfgSiteCode" -Query "select * from SMS_ObjectContainerItem where ContainerNodeID = '$($InstanceKey.ContainerNodeID)'" | ForEach-Object {
-        Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$CfgSiteCode" -Query "select * from SMS_Collection where CollectionID = ""$($_.InstanceKey)"""} | %{
-            [PSCustomObject]@{
-                'FolderName' = $FolderName; 
-                'CollectionName' = $_.Name;
-                'CollectionID' = $_.CollectionID
-                'LimitingCollection' = $_.LimitToCollectionName
+    get-wmiobject -computername $cfgsiteserver -namespace "root\sms\site_$cfgsitecode" -query "select * from sms_objectcontaineritem where containernodeid = '$($instancekey.containernodeid)'" | foreach-object {
+        get-wmiobject -computername $cfgsiteserver -namespace "root\sms\site_$cfgsitecode" -query "select * from sms_collection where collectionid = ""$($_.instancekey)"""} | %{
+            [pscustomobject]@{
+                'foldername' = $foldername; 
+                'collectionname' = $_.name;
+                'collectionid' = $_.collectionid
+                'limitingcollection' = $_.limittocollectionname
             }
         }
 }

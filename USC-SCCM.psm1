@@ -414,13 +414,13 @@ function Test-CfgCollectionMembers {
     ChangeLog:
     1.0 - First Release
 #>
-Param($Collection, $TTL=2)
+Param($Collection)
 
 Test-CfgGlobalVars -ErrorAction Stop
 
 Get-CfgCollectionMembers -Collection $Collection | `
   ForEach-Object { 
-        $TestConn = Test-Connection -TimeToLive $TTL -ComputerName $_.ComputerName -Count 1 -ErrorAction SilentlyContinue
+        $TestConn = Test-Connection -ComputerName $_.ComputerName -Count 1 -ErrorAction SilentlyContinue
         If ( $TestConn ) { 
             $_ | Add-Member -MemberType NoteProperty -Name "Online" -Value $True
             Try {
@@ -1928,7 +1928,7 @@ function Get-CurrentUser {
 			$Computers = $ComputerName
 		}
 		Foreach ($ComputerName in $Computers) {
-			If (Test-Connection -ComputerName $ComputerName -Quiet -Count 1 -TTL 5) {
+			If (Test-Connection -ComputerName $ComputerName -Quiet -Count 1) {
 				Get-WmiObject -ComputerName $ComputerName -Class Win32_computersystem | 
 					Select -Property @{label='UserName'; expression={$_.UserName.TrimStart("USC\")}},@{label='ComputerName';expression={$ComputerName}}
 			}
@@ -2434,6 +2434,5 @@ function Get-CfgApplicationState {
                 -Name PSStandardMembers $PSStandardMembers `
                 -PassThru
         }
-
     }
 }

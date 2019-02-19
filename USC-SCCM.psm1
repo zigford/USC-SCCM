@@ -2436,3 +2436,35 @@ function Get-CfgApplicationState {
         }
     }
 }
+
+function Get-CfgDeploymentDetails {
+    <#
+    .SYNOPSIS
+        Show assets and their deployment status (Success/Failure) based on an Assignment Name
+    .DESCRIPTION
+        Read the SMS_SUM class and show the last status message of each device. Should work
+        on update deployments, applications and anything that appears in the deployments node
+        of the console.
+    .PARAMETER AssignmentName
+        Specify the name of an assignment. Accepts partial match.
+    .EXAMPLE
+        Get-CfgDeploymentDetails -AssignmentName "1803"
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+[CmdLetBinding()]
+Param(
+    [Parameter(Mandatory=$True)]$AssignmentName
+)
+    Test-CfgGlobalVars -ErrorAction Stop
+    
+    Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$CfgSiteCode" -Query `
+        "Select * from SMS_SUMDeploymentAssetDetails Where AssignmentName Like '%$AssignmentName%'" |
+        Select-Object -Property `
+            @{label='ComputerName';expression={$_.DeviceName}},
+            AssignmentName,
+            @{label='Message';expression={$_.LastEnforcementMessageDesc}},
+            @{label='Compliance';expression={$_.LastComplianceMessageDesc}}
+}

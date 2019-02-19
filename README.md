@@ -1,6 +1,9 @@
 Whats New
 =========
 
+### 19/02/2019 : New CmdLet Get-CfgDeploymentDetail
+* Show deployment status of a deployment, per asset from the command line
+
 ### 20/04/2018 : Update to Get-CfgClientInventory (ginv)
 * Now supports searching for devices using -PrimaryUser parameter which get's devices based on user device affinity.
 * Supports "PrimaryUser" roperty to return when using the -Properties parameter.

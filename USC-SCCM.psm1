@@ -2395,3 +2395,41 @@ function Get-CfgApplicationState {
 
     }
 }
+
+function Get-CfgPendingUpdates {
+<#
+    .SYNOPSIS
+    Get a list of pending updates for a machine
+    
+    .DESCRIPTION
+    Connects to a config manager client and uses the client sdk to list updates pending
+    
+    .PARAMETER ComputerName
+    The computer to connect to
+
+   .EXAMPLE
+    C:\PS>Get-CfgCollectionsDeps 'All USC Managed Computers' | Get-CfgPendingUpdates
+#>
+    [CmdletBinding()]
+    Param([Parameter(ValueFromPipelineByPropertyName=$True)]$ComputerName)
+
+    Begin{}
+    Process{
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $ComputerName.ComputerName
+        }
+
+        Write-Verbose "Connecting to $ComputerName"
+        $Updates = Get-CimInstance -ComputerName $ComputerName `
+            -NameSpace root\ccm\clientsdk -ClassName CCM_SoftwareBase `
+            -EA SilentlyContinue
+
+        $Updates | ForEach-Object {
+            [PSCustomObject]@{
+                ComputerName = $ComputerName
+                Name = $_.Name
+                URL = $_.URL
+            }
+        }
+    }
+}

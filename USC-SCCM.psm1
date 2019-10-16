@@ -1,15 +1,4 @@
-﻿<#v1.5 
-	(Modified Send-CfgMachinePolicyUpdate to wait 2 seconds rather than 10 between downloading
-	and evaluating policy)
-	(Modified Send-WOL to send the WOL packet to port 1230 and port 9)
-	(Modified Get-CfgClientInventory default properties)
-	(Added new Install-CCM command)
-    (Added Admin test to Send-Wol)
-	#>
-#v1.4 (Added documentation)
-#v1.3 (Added Send-RepairCCM)
-
-function Import-CfgGlobalVars {
+﻿function Import-CfgGlobalVars {
 [CmdLetBinding()]
 Param()
     if ($PSVersionTable.OS -match 'Linux') {

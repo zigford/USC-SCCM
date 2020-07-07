@@ -1,6 +1,9 @@
 Whats New
 =========
 
+### 08/07/2020 : New functions Get-PendingUpdates and Get-ServiceWindow
+* See updates status and service windows at a glance.
+
 ### 20/04/2018 : Update to Get-CfgClientInventory (ginv)
 * Now supports searching for devices using -PrimaryUser parameter which get's devices based on user device affinity.
 * Supports "PrimaryUser" roperty to return when using the -Properties parameter.

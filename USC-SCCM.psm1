@@ -1,15 +1,4 @@
-﻿<#v1.5 
-	(Modified Send-CfgMachinePolicyUpdate to wait 2 seconds rather than 10 between downloading
-	and evaluating policy)
-	(Modified Send-WOL to send the WOL packet to port 1230 and port 9)
-	(Modified Get-CfgClientInventory default properties)
-	(Added new Install-CCM command)
-    (Added Admin test to Send-Wol)
-	#>
-#v1.4 (Added documentation)
-#v1.3 (Added Send-RepairCCM)
-
-function Import-CfgGlobalVars {
+﻿function Import-CfgGlobalVars {
 [CmdLetBinding()]
 Param()
     if ($PSVersionTable.OS -match 'Linux') {
@@ -429,7 +418,6 @@ function Send-CfgUserUpdateTrigger {
     $sched.Triggers=@('SimpleInterval;Minutes=1;MaxRandomDelayMinutes=0');
     $sched.Put()
 }
-
 
 function Get-CfgCacheSize {
 Param($ComputerName=$env:ComputerName)
@@ -1326,7 +1314,6 @@ function Test-Pingable {
     }
 }
 
-
 function Get-CfgIPAddress {
 <#
     .SYNOPSIS
@@ -1671,7 +1658,6 @@ function Get-AdvertisementResult {
 			}
 	}
 }
-
 
 function Get-MachineInventory {
 <#
@@ -2405,4 +2391,144 @@ function Get-CfgApplicationState {
         }
 
     }
+}
+
+function Get-PendingUpdates {
+    <#
+    .SYNOPSIS
+        Show the status of pending updates on an SCCM Client
+    .DESCRIPTION
+        Using the clientsdk and wmi, translate the pending updates to 
+        something little more readble.
+    .PARAMETER ComputerName
+        Specify the computer to connect to to read update data.
+    .EXAMPLE
+        Get-CfgCollectionMembers "MW - Windows Server Patch" | Get-PendingUpdates
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    Param([Parameter(
+                ValueFromPipeline=$True,
+                ValueFromPipelineByPropertyName=$True
+         )]$ComputerName)
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $ComputerName.ComputerName
+        }
+        $WMIParams = @{
+            ComputerName = $ComputerName
+            Namespace = 'root\ccm\ClientSDK'
+            Class = 'CCM_SoftwareUpdate'
+        }
+        $ErrorActionPreference = 'Stop'
+        Try {
+            Get-WMIObject @WMIParams | ForEach-Object {
+                [PSCustomObject]@{
+                    ComputerName = $ComputerName
+                    Status = Switch ($_.EvaluationState) {
+                        1 {"Available"}
+                        2 {"Submitted" }
+                        3 {"Detecting"}
+                        4 {"PreDownload"}
+                        5 {"Downloading"}
+                        6 {"Waiting to install"}
+                        7 {"Installing"}
+                        8 {"Pending Soft Reboot"}
+                        9 {"Pending Hard Reboot"}
+                        10 {"Wait Reboot"}
+                        11 {"Verifying"}
+                        12 {"Install complete"}
+                        13 {"Error"}
+                        14 {"Waiting for service window"}
+                        15 {"Waiting for user logon"}
+                        16 {"Waiting for user logoff"}
+                        17 {"Wait job user logon"}
+                        18 {"Waiting for user reconnect"}
+                        19 {"Pending user logoff"}
+                        20 {"Pending update"}
+                        21 {"Waiting retry"}
+                        22 {"Waiting for presentation mode off"}
+                        23 {"Wait for orchestration"}
+                    }
+                    MaxRunTime = $_.MaxExecutionTime / 60
+                    Update = $_.Name
+                }
+            }
+        } catch {
+            Write-Warning "Could not connect to $ComputerName"
+        }
+    }
+}
+
+function Get-ServiceWindow {
+    <#
+    .SYNOPSIS
+        Show a list of service windows configured on an SCCM Client.
+    .DESCRIPTION
+        Using the clientsdk and wmi, translate the service window lists to
+        something little more readble.
+    .PARAMETER ComputerName
+        Specify the computer to connect to to read service window data.
+    .PARAMETER Type
+        Filter the output to show only maintenance windows of specific type.
+    .EXAMPLE
+        Get-CfgCollectionMembers "MW - Windows Server Patch" | Get-ServiceWindow `
+            -Type 'All Programs'
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    Param([Parameter(
+                ValueFromPipeline=$True,
+                ValueFromPipelineByPropertyName=$True
+         )]$ComputerName,
+            [ValidateSet(
+                'Business hours',
+                'All Programs',
+                'Software update'
+        )]$Type)
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $ComputerName.ComputerName
+        }
+        $WMIParams = @{
+            ComputerName = $ComputerName
+            Namespace = 'root\ccm\ClientSDK'
+            Class = 'CCM_ServiceWindow'
+        }
+        $ErrorActionPreference = 'Stop'
+        Try {
+            Get-WMIObject @WMIParams | ForEach-Object {
+                $Window = [PSCustomObject]@{
+                    ComputerName = $ComputerName
+                    StartTime = $_.ConvertToDateTime($_.StartTime)
+                    EndTime = $_.ConvertToDateTime($_.EndTime)
+                    Duration = [int]($_.Duration/60/60)
+                    Type = Switch ($_.Type) {
+                        1 {"All Programs"}
+                        2 {"Program" }
+                        3 {"Reboot Required"}
+                        4 {"Software Update"}
+                        5 {"OSD"}
+                        6 {"Business hours"}
+                    }
+                }
+                If ($Type -and $Type -eq $Window.Type) {
+                    $Window
+                } elseif (-Not $Type) {
+                    $Window
+                }
+
+            }
+        } catch {
+            Write-Warning "Could not connect to $ComputerName"
+        }
+    }
+
+
 }

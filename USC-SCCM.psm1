@@ -2463,6 +2463,56 @@ function Get-PendingUpdates {
     }
 }
 
+function Install-PendingUpdates {
+    <#
+    .SYNOPSIS
+        Install pending updates as returned by Get-PendingUpdates
+    .DESCRIPTION
+        Uses the ClientSDK to install pending updates
+    .PARAMETER Update
+        The name or array of names of an update. In the WMI Class these are called 'Name'
+        Get-PendingUpdate returns them as 'Name
+    .PARAMETER ComputerName
+        Specify the computername to get updates for
+    .EXAMPLE
+        This is for you dean.
+        PS> Get-PendingUpdates -ComputerName wst-infadmin03 | Install-PendingUpdates
+    .EXAMPLE
+        PS> Install-PendingUpdates -ComputerName wst-infadmin03 -Update '2020-06 Security Update for Adobe Flash Player for Windows Server 2016 for x64-based Systems (KB4561600)'
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    Param(
+            [Parameter(ValueFromPipelineByPropertyName=$True)]
+            $ComputerName,
+            [Parameter(ValueFromPipelineByPropertyName=$True)]
+            $Update
+        )
+
+    Begin { [System.Management.ManagementObject[]]$Updates = $() }
+
+    Process {
+        # Gather updates to apply
+        If (-Not $Updates) {
+            $AllUpdatesAvailable = Get-WMIObject `
+                -ComputerName $ComputerName `
+                -Namespace root\ccm\clientsdk `
+                -Class CCM_SoftwareUpdate
+        }
+        $Updates += $AllUpdatesAvailable | Where-Object { $_.Name -eq $Update }
+    }
+
+    End {
+        Invoke-WMIMethod -ComputerName $ComputerName `
+            -Namespace root\ccm\ClientSDK `
+            -Class CCM_SoftwareUpdatesManager `
+            -Name InstallUpdates `
+            -ArgumentList $Updates
+    }
+}
+
 function Get-ServiceWindow {
     <#
     .SYNOPSIS

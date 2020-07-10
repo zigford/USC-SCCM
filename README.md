@@ -1,6 +1,9 @@
 Whats New
 =========
 
+### 10/07/2020 : A New function for Dean. Install-PendingUpdates
+* You can now go: Get-PendingUpdates -ComputerName | Install-PendingUpdates
+ 
 ### 08/07/2020 : New functions Get-PendingUpdates and Get-ServiceWindow
 * See updates status and service windows at a glance.
 

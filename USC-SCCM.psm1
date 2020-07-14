@@ -2582,3 +2582,36 @@ function Get-ServiceWindow {
 
 
 }
+
+function Reset-CfgClientPolicy {
+<#
+    .SYNOPSIS
+        Reset the SCCM Policy of a machine.
+    .DESCRIPTION
+        Using Invoke-WMIMethod, call the ResetPolicy method.
+    .PARAMETER ComputerName
+        Specify the computer to connect to connect to.
+    .EXAMPLE
+        Reset-CfgClientPolicy -ComputerName Blah
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    Param(
+            [Parameter(
+                ValueFromPipeline=$True,
+                ValueFromPipelineByPropertyName=$True
+            )]$ComputerName
+         )
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $ComputerName.ComputerName
+        }
+        Invoke-WMIMethod -ComputerName $ComputerName `
+            -Namespace root\ccm -Class SMS_Client `
+            -Name ResetPolicy `
+            -ArgumentList 1
+    }
+}

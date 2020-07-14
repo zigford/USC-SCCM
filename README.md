@@ -1,6 +1,8 @@
 Whats New
 =========
 
+### 14/07/2020 : A New function, Reset-CfgClientPolicy
+
 ### 10/07/2020 : A New function for Dean. Install-PendingUpdates
 * You can now go: Get-PendingUpdates -ComputerName | Install-PendingUpdates
  

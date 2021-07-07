@@ -1,15 +1,4 @@
-﻿<#v1.5 
-	(Modified Send-CfgMachinePolicyUpdate to wait 2 seconds rather than 10 between downloading
-	and evaluating policy)
-	(Modified Send-WOL to send the WOL packet to port 1230 and port 9)
-	(Modified Get-CfgClientInventory default properties)
-	(Added new Install-CCM command)
-    (Added Admin test to Send-Wol)
-	#>
-#v1.4 (Added documentation)
-#v1.3 (Added Send-RepairCCM)
-
-function Import-CfgGlobalVars {
+﻿function Import-CfgGlobalVars {
 [CmdLetBinding()]
 Param()
     if ($PSVersionTable.OS -match 'Linux') {
@@ -56,7 +45,28 @@ Param()
     }
 }
 
-Import-CfgGlobalVars
+function Connect-CfgSiteServer {
+    <#
+    .SYNOPSIS
+        Setup global vars for other USC-SCCM module commandlets
+    .DESCRIPTION
+        Attempt to import global variables for other USC-SCCM module cmdlets, and if they don't exists, or the server cannot be contacted, prompt for input.
+    .EXAMPLE
+        Connect-CfgSiteServer
+
+        Enter your site server hostname: 
+    .NOTES
+        Author: Jesse Harris
+        Date: 01/06/2018
+    .LINK
+        https://github.com/zigford/USC-SCCM
+    #>
+    [CmdLetBinding()]
+    Param()
+
+    Import-CfgGlobalVars
+
+}
 
 function Test-CurrentAdminRights {
     #Return $True if process has admin rights, otherwise $False
@@ -123,6 +133,9 @@ function Get-CfgClientInventory {
     
     .PARAMETER ComputerName
     The name of a ConfigMgr client, registered with the Site Server. The percent symbol can be used inplace as a wildcard.
+
+    .PARAMETER PrimaryUser
+    If the PrimaryUser parameter is used, a search will be performed for the ConfigMgr clients where the Resource is linked to the Primary user. The percent symbol can be used inplace as a wildcard.
 	
 	.PARAMETER UserName
 	If the UserName parameter is used, a search will be performed for ConfigMgr clients where the username matches LastLogonUserName. The percent symbol can be used inplace as a wildcard.
@@ -172,6 +185,15 @@ function Get-CfgClientInventory {
 	fe80::b83a:7f75:cfcc:47fb
 	fe80::fda2:bc20:ea38:6c80
 
+    .EXAMPLE
+    C:\PS>Get-CfgClientInventory -PrimaryUser '%jpharris' -Properties PrimaryUser
+
+    ComputerName  LastLogonUserName IPAddresses     PrimaryUser
+    ------------  ----------------- -----------     -----------
+    049660345053  slawford          {10.205.80.33}  {USC\AdminJPHarris, usc\lgoldsbo, USC\slaw
+    WSP-LICENSE01                   {10.104.0.191}  {usc\adminjpharris, usc\adminlgoldsbo
+
+
     .NOTES
     Author: Jesse Harris
     For: University of Sunshine Coast
@@ -179,27 +201,55 @@ function Get-CfgClientInventory {
     ChangeLog:
     1.0 - First Release
     1.1 - 10/04/2012 - Modified default properties and docs
-#>
-  [CmdletBinding()]
+    1.2 - 19/04/2018 - Added PrimaryUser property and search on primary user
 
-      Param(
-      [Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
-      [string[]]$ComputerName="$env:computername",$UserName,
-      $CfgSiteCode=$Global:CfgSiteCode, $CfgSiteServer=$Global:CfgSiteServer,$Properties,[Switch]$ExtendedData)
+    .LINKS
+    https://github.com/zigford/USC-SCCM
+#>
+  [CmdletBinding(DefaultParameterSetName="Computer")]
+
+    Param(
+        [Parameter(
+            ValueFromPipeline=$True,
+            ValueFromPipelinebyPropertyName=$True,
+            ParameterSetName="Computer")]
+        [Parameter(
+            Position = 0    
+        )]
+        [string[]]$ComputerName="$env:computername",
+        [Parameter(
+            ParameterSetName="User"
+        )]
+        [string]$UserName,
+        [Parameter(
+            ParameterSetName="PrimaryUser"
+        )]
+        $PrimaryUser,
+        $CfgSiteCode=$Global:CfgSiteCode,
+        $CfgSiteServer=$Global:CfgSiteServer,
+        $Properties,
+        [Switch]$ExtendedData
+    )
 PROCESS {
 
       function CfgClientInventory-Worker {
-        Param($Name,$User)
+        Param($Name,$User,$PrimaryUser)
         #Set Default Object properties
         $defaultProperties = @('ComputerName','LastLogonUserName', 'IPAddresses')
 
         If ($Name -ne $null) {
-		$Query = "Select * from SMS_R_System Where Name like '$Name'"
-        } ElseIf ($UserName -ne $null) {
-        $Query = "Select * from SMS_R_System Where LastLogonUserName like '$User'"
+            $Query = "Select * from SMS_R_System Where Name like '$Name'"
+            $QueryResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $Query
+        } ElseIf ($User) {
+            $Query = "Select * from SMS_R_System Where LastLogonUserName like '$User'"
+            $QueryResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $Query
+        } elseif ($PrimaryUser) {
+            $UDAQuery = "Select * from SMS_UserMachineRelationship Where UniqueUserName like '$PrimaryUser'"
+            $UDAResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $UDAQuery
+            $QueryResults = $UDAResults | ForEach-Object {
+                Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query "Select * from SMS_R_System Where ResourceID = '$($_.ResourceID)'"
+            }
         }
-        $QueryResults = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" `
-            -Query $Query
         Foreach ($Result in $QueryResults) {
             $MonitorRes = $null
             $MonitorCount = $null
@@ -215,6 +265,14 @@ PROCESS {
                     $Result | Add-Member -MemberType NoteProperty -Name Model -Value (Get-WMIObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $ModelQuery).Model
                     $defaultProperties += "Model"
                     }
+                PrimaryUser {
+                    $PrimaryUserQuery = 'Select * from SMS_UserMachineRelationship Where ResourceID = "' + $Result.ResourceID + '"'
+                    $UDAData = Get-WMIObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $PrimaryUserQuery
+                    If ($UDAData) {
+                        $Result | Add-Member -MemberType NoteProperty -Name PrimaryUser -Value $UDAData.UniqueUserName
+                        $defaultProperties += "PrimaryUser"
+                    }
+                }
                 Monitor {
                     $MonitorQuery = 'Select * from SMS_G_System_DESKTOP_MONITOR Where ResourceID = "' + $Result.ResourceID + '"'
                     $MonitorData = (Get-WMIObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$($CfgSiteCode)" -Query $MonitorQuery)
@@ -283,8 +341,10 @@ PROCESS {
         
       }
 
-    If ($UserName -ne $null) { 
+    If ($UserName) { 
         CfgClientInventory-Worker -User $UserName
+    } Elseif ($PrimaryUser) {
+        CfgClientInventory-Worker -PrimaryUser $PrimaryUser
     } Else {
         If ($PSBoundParameters.ContainsKey('ComputerName')) {
             Foreach ($Computer in $ComputerName) {
@@ -358,7 +418,6 @@ function Send-CfgUserUpdateTrigger {
     $sched.Triggers=@('SimpleInterval;Minutes=1;MaxRandomDelayMinutes=0');
     $sched.Put()
 }
-
 
 function Get-CfgCacheSize {
 Param($ComputerName=$env:ComputerName)
@@ -593,7 +652,8 @@ function Send-CfgTrigger {
           'User',
           'HWInventory',
           'SCEP',
-          'UpdateScan'
+          'ScanUpdateSource',
+          'SUAssignmentEval'
           )][string[]]$TriggerName)
 	  
 BEGIN {
@@ -604,9 +664,8 @@ BEGIN {
 		HWInventory {'{00000000-0000-0000-0000-000000000001}'}
 		SWInventory {'{00000000-0000-0000-0000-000000000002}'}
 		SCEP {'{00000000-0000-0000-0000-000000000221}'}
-        UpdateScan {
-            '{00000000-0000-0000-0000-000000000113}','{00000000-0000-0000-0000-000000000114}'
-            $Delay = 15    }
+        ScanUpdateSource {'{00000000-0000-0000-0000-000000000113}'}
+        SUAssignmentEval {'{00000000-0000-0000-0000-000000000108}'}
 		Default {'{00000000-0000-0000-0000-000000000021}','{00000000-0000-0000-0000-000000000022}'}
 	}
 }
@@ -694,6 +753,9 @@ function Send-CfgMachineUpdateTrigger {
     
     .PARAMETER ComputerName
     The name of a ConfigMgr client, registered with the Site Server.
+
+    .PARAMETER Force
+    Send a hard policy reset prior to a regular machine policy evlauation cyle
     
    .EXAMPLE
     C:\PS>Send-CfgMachineUpdateTrigger -ComputerName 9k9562s
@@ -715,17 +777,36 @@ function Send-CfgMachineUpdateTrigger {
 
       Param(
       [Parameter(Mandatory=$true,ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)]
-      [string[]]$ComputerName)
+      [string[]]$ComputerName,
+      [switch]$Force,
+      [switch]$Confirm=$True)
 PROCESS {
 
 	function SendMachineUpdate-Worker {
 		Param($sName)
 		$SCCMClient = [WMIClass]"\\$sName\Root\CCM:SMS_Client"
-		Write-Host "Downloading Policy for $sName"
+        If ($Force) {
+            If ($Confirm) {
+                While ($ans -notin 'y','n') {
+                    $ans = Read-Host -Prompt "Using the force parameter will cause a full machine policy reset. Are you sure you wish to continue ? (y/n)"
+                }
+                If ($ans -eq 'y') {
+                    $AllowReset = $True
+                }
+            } else {
+                $AllowReset = $True
+            }
+            If ($AllowReset) {
+                Write-Verbose "Forcing policy reset"
+                $SCCMClient.ResetPolicy(1)
+                $SCCMClient.psbase.InvokeMethod("TriggerSchedule", "{00000000-0000-0000-0000-000000000040}")
+            }
+        }
+		Write-Verbose "Downloading Policy for $sName"
 		Try {$SCCMClient.psbase.InvokeMethod("TriggerSchedule", "{00000000-0000-0000-0000-000000000021}") }
 		Catch { "An Error occured" }
 		Start-Sleep -Seconds 2
-		Write-Host "Evaluating Policy for $sName"
+		Write-Verbose "Evaluating Policy for $sName"
 		Try {$SCCMClient.psbase.InvokeMethod("TriggerSchedule", "{00000000-0000-0000-0000-000000000022}") }
 		Catch { "An Error occured" }
 	}
@@ -1081,8 +1162,10 @@ function Send-WOL {
         function Find-WOLProxyOnSubnet($IPSubnet) {
             # Get a machine on $IPSubnet that can be used to send WOL via WinRM
             $MachinesOnSameIP = Get-WmiObject -ComputerName $CfgSiteServer -Namespace root\sms\site_$CfgSiteCode -Query "Select Name from SMS_R_SYSTEM Where IPADDRESSES Like ""$($IPSubnet)"""
-            # $MachinesOnSameIP = $MachinesOnSameIP.Name | Test-Pingable | ? { $_.Up }
-            $MachinesOnSameIP = $MachinesOnSameIP.Name
+            $TotalCountMachinesOnSameIP = $MachinesOnSameIP.Count
+            $MachinesOnSameIP = $MachinesOnSameIP.Name | Test-Pingable | ? { $_.Up }
+            $MachinesOnSameIP = $MachinesOnSameIP.ComputerName
+            write-verbose "Found $($MachinesOnSameIP.Count) pingable computers out of $TotalCountMachinesOnSameIP neighbours"
             $WorkingMachine = $null
             Foreach ($Machine in $MachinesOnSameIP) {
                 # Write-Verbose "Testing $Machine.."
@@ -1131,8 +1214,10 @@ function Send-WOL {
         }
 
         # Main
-        If (! (Test-CurrentAdminRights) ) { Write-Warning "Please run as Admin"; return }
-
+        If (! $BroadCast -and ! $SendFrom){
+            # Admin rights is only relevant for local packets. Skip admin check if Broadcast is specified
+            if (! (Test-CurrentAdminRights)) { Write-Warning "Please run as Admin"; return }
+        }
         If ($SendFrom) {
             $WinRMHost = Test-SendFrom -SendFrom $SendFrom
         }
@@ -1183,7 +1268,51 @@ function Send-WOL {
             }
         }
     }
-}   
+}
+
+function Test-Pingable {
+    <#
+    .SYNOPSIS
+    Parallel pingerer. Promptly pings a plethora of pooters in parallel. Returns a list of computers and whether they are up or not.
+    
+    .PARAMETER ComputerName
+    Computer name to ping
+
+    .EXAMPLE
+    Test-pingable PC12ABC
+    Get-CfgCollectionMembers "Lab DG35" | Test-Pingable
+    
+    .NOTES
+    Author: Darryl Rees
+    Date Created: 24 November 2017     
+    ChangeLog:
+    #>
+
+    Param (
+        [Alias("Name","Computer")][Parameter(ValueFromPipeline=$True,ValueFromPipelinebyPropertyName=$True)][string[]]$ComputerName
+    )
+
+    Begin {
+        $jobs=@()
+        $Computers=@()
+    }
+    Process {
+        $NumPings = 3
+        $jobs = $jobs + (test-connection $ComputerName -count $NumPings -asjob)
+        $Computers = $Computers + $ComputerName
+    }
+    End {
+        $pingresults = $jobs | receive-job -wait | select address, responsetime | group -ashash -asstring address
+        # Now put back into the original order they were passed, and
+        # check to see if a single echo/ping request returned with a non-null responsetime
+        Foreach ($Computer in $Computers) {
+            [PSCustomObject]@{
+                ComputerName = $Computer
+                Up = (($PingResults.$Computer | measure-object -property responsetime -maximum).maximum -ne $Null)
+            }
+        }
+    }
+}
 
 function Get-CfgIPAddress {
 <#
@@ -1529,7 +1658,6 @@ function Get-AdvertisementResult {
 			}
 	}
 }
-
 
 function Get-MachineInventory {
 <#
@@ -1952,76 +2080,138 @@ function Get-CfgConfigEval {
     }
 }
 
-function Get-CfgCollectionsByFolder {
+Function Get-CfgItemsByFolder {
 <#
     .SYNOPSIS
-    Get Collections based on their administrative assigned folder.
+    Get objects based on their administrative assigned folder.
     
     .DESCRIPTION
-    Connects to the primary site server, and returns collections which are contained in a folder.
+    Connects to the primary site server, and returns items which are contained in a folder.
     
     .PARAMETER FolderName
-    The name of a folder containing device collections.
+    The name of a folder containing objects. If not specified, a list of folders is returned.
 
-    .PARAMETER SiteServer
-    The hostname of the primary site server.
-    
+    .PARAMETER ItemType
+    Specify the type of item to return folders for.
+
    .EXAMPLE
-    C:\PS>Get-CfgCollectionsByFolder -FolderName 'Software Distribution'
+    C:\PS> Get-CfgItemsByFolder -FolderName 'software distribution' -ItemType DeviceCollection
     
     FolderName            CollectionName                                         CollectionID LimitingCollection
     ----------            --------------                                         ------------ ------------------
-    Software Distribution Adobe Presenter 8 MSI WKS-Install                      SC100014     All Systems
     Software Distribution Adobe Presenter 8 MSI WKS-Uninstall                    SC100015     All Systems
-    Software Distribution ClimSystems TrainClim 2.0.0.31 MSI WKS                 SC100019     All Systems
-    Software Distribution ClimSystems TrainClim 2.0.0.31 MSI WKS-Install         SC10001A     ClimSystems TrainClim 2.0.0.31 MS..
-    Software Distribution ClimSystems TrainClim 2.0.0.31 MSI WKS-Uninstall       SC10001B     All Systems
+    Software Distribution Climsystems Trainclim 2.0.0.31 MSI WKS-Install         SC10001A     Climsystems Trainclim 2.0.0.31 ms..
     Software Distribution Google Google Chrome 23.0.1271.97 MSI WKS              SC10001C     All Systems
-    Software Distribution Google Google Chrome 23.0.1271.97 MSI WKS-Install      SC10001D     Google Google Chrome 23.0.1271.97..
 	
     .EXAMPLE
-	C:\PS>Get-CfgCollectionsByFolder -FolderName 'Software Distribution' | ? LimitingCollection -eq "All USC Managed Computers" | %{Set-CMDeviceCollection -CollectionId $_.CollectionID -LimitToCollectionID SC100030
+	C:\PS> Get-CfgItemsByFolder -FolderName 'Software Distribution' | ? LimitingCollection -eq "All USC Managed Computers" | %{Set-CMDeviceCollection -CollectionID $_.CollectionID -LimitToCollectionID SC100030
 
     This command will retrieve all collections under the 'Software Distribution' folder which are currently limited to collection name 'All USC Managed Computers' and limit them to 'All USC Non-Volatile Computers'
 		
     .EXAMPLE
-    C:\PS>Get-CfgCollectionsByFolder -FolderName 'Software Distribution' -UserCollection
+    C:\PS> Get-CfgItemsbyFolder -Foldername 'Software Distribution' -ItemType UserCollection
 
     This command will retrieve user collections by user foldername.
 
+    .EXAMPLE
+    C:\PS> Get-CfgItemsByFolder -ItemType TaskSequence
+
+    FolderName
+    ----------
+    Production
+    Firmware Updates
+    Retired
+    Utility
+    Backups
+    Kiosks
+    Development
+
     .NOTES
-    Some of the examples in this help, depend on the official Configuration Manager module
+    Some of the examples in this help, depend on the official configuration manager module
     Author: Jesse Harris
-    For: University of Sunshine Coast
+    For: University Of Sunshine Coast
     Date Created: 17 May 2016
-    ChangeLog:
+    Changelog:
     1.0 - First Release
+    2.0 - 31/10/2018, Revamp to support more than collections.
 #>
-[CmdLetBinding()]
-Param([Parameter(Mandatory=$True)]$FolderName,$CfgSiteServer=$Global:CfgSiteServer,$CfgSiteCode=$Global:CfgSiteCode,[switch]$UserCollection)
+[cmdletbinding()]
+param([ValidateSet(
+    "Package",
+    "DeviceCollection",
+    "UserCollection",
+    "Application",
+    "TaskSequence",
+    "Query",
+    "ConfigurationBaseline",
+    "ConfigurationItem",
+    "MeteringRule"
+     )]
+    [Parameter(Mandatory=$True)]$ItemType,
+    $FolderName,
+    $CfgSiteServer=$global:CfgSiteServer,$CfgSiteCode=$global:CfgSiteCode
+    )
+    $NS = "root\sms\site_$CfgSiteCode"
     
-    If ($UserCollection) {
-        $objectType = 'SMS_Collection_User'
-    } Else {
-        $objectType = 'SMS_Collection_Device'
+    $objecttype = Switch ($ItemType) {
+        "Package" { "SMS_Package" }
+        "DeviceCollection" { "SMS_Collection_Device" }
+        "UserCollection" { "SMS_Collection_User" }
+        "Application" { "SMS_ApplicationLatest" }
+        "TaskSequence" { "SMS_TaskSequencePackage" }
+        "Query" { "SMS_Query" }
+        "ConfigurationBaseline" { "SMS_ConfigurationBaselineInfo" }
+        "ConfigurationItem" { "SMS_ConfigurationItemLatest" }
+        "MeteringRule" { "SMS_MeteredProductRule" }
     }
 
-    $InstanceKey = Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_SC1" -Query "Select * from SMS_ObjectContainerNode Where objectTypeName = '$objectType'" | Where-Object {$_.Name -eq $FolderName}
+    $q = "select * from sms_objectcontainernode where objecttypename = '$objecttype'"
+    If ($FolderName) {
+        $InstanceKey = Get-WmiObject -ComputerName $CfgSiteServer -NameSpace $NS -query $q |
+        Where-Object {$_.Name -eq $FolderName}
+    } else {
+        Get-WmiObject -ComputerName $CfgSiteServer -NameSpace $NS -query $q |
+        Select-Object -Property @{Name='FolderName';expression={$_.Name}}
+    }
+
     If (-Not $InstanceKey) {
-        Write-Error -Category ObjectNotFound -Message "No Configuration manager folder named $FolderName could be found"
+        #Write-Error -Category objectnotfound -Message "No configuration manager folder could be found"
         return
     }
 
-
-    Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$CfgSiteCode" -Query "select * from SMS_ObjectContainerItem where ContainerNodeID = '$($InstanceKey.ContainerNodeID)'" | ForEach-Object {
-        Get-WmiObject -ComputerName $CfgSiteServer -Namespace "root\sms\site_$CfgSiteCode" -Query "select * from SMS_Collection where CollectionID = ""$($_.InstanceKey)"""} | %{
+    $q = "select * from sms_objectcontaineritem where containernodeid = "
+    $q += "'$($instancekey.containernodeid)'" 
+    Get-WmiObject -ComputerName $CfgSiteServer -NameSpace $NS -Query $q | ForEach-Object {
+        If ($ItemType -match 'collection') {
+            $q = "select * from SMS_Collection where CollectionID = ""$($_.instancekey)"""
+            Get-WmiObject -ComputerName $CfgSiteServer -Namespace $NS -Query $q |
+            ForEach-Object {
+                [pscustomobject]@{
+                    'foldername' = $foldername; 
+                    'collectionname' = $_.name;
+                    'collectionid' = $_.collectionid
+                    'limitingcollection' = $_.limittocollectionname
+                }
+            }
+        } else {
             [PSCustomObject]@{
-                'FolderName' = $FolderName; 
-                'CollectionName' = $_.Name;
-                'CollectionID' = $_.CollectionID
-                'LimitingCollection' = $_.LimitToCollectionName
+                'FolderName' = $FolderName
+                'ObjectID' = $_.InstanceKey
             }
         }
+    }
+}
+
+Function Get-CfgCollectionsByFolder {
+    [CmdLetBinding()]
+    Param([Switch]$UserCollection,[Parameter(Mandatory=$True)]$FolderName)
+
+    Write-Warning "This function will be depricated"
+    If ($UserCollection) {
+        Get-CfgItemsByFolder -ItemType 'UserCollection' -FolderName $FolderName
+    } else {
+        Get-CfgItemsByFolder -ItemType 'DeviceCollection' -FolderName $FolderName
+    }
 }
 
 function Get-CfgCollectionsDeps {
@@ -2090,5 +2280,338 @@ function Invoke-CfgStateMessageSend {
             $CCMObject = New-Object -ComObject Microsoft.CCM.UpdatesStore
             $CCMObject.RefreshServerComplianceState()
         }
+    }
+}
+
+function Set-CfgService {
+    [CmdLetBinding()]
+    Param($ComputerName=$env:ComputerName,$Name,
+    $Previous)
+    
+    Switch ($Name) {
+        rw {$s = 'WinRM'}
+        rr {$s = 'RemoteRegistry'}
+        cm {$s = 'CCMExec'}
+        Default {$s = $Name}
+    }
+
+    $Result = $null
+    $Svc = Get-Service -ComputerName $ComputerName -Name $s
+    If ($Previous -eq 'Disabled') {
+            $Svc | Stop-Service
+            $Svc | Set-Service -StartUpType 'Disabled'
+    ElseIf ($Previous -eq 'Stopped') {
+            $Svc | Stop-Service
+        }
+    } Else {
+        Switch ($Svc.Status) {
+            'Running' {$Svc | Restart-Service}
+            'Stopped' {If ($Svc.StartType -eq 'Disabled') {$Result='Disabled'; $Svc | Set-Service -StartUpType Manual} Else {$Result='Stopped'}; $Svc | Start-Service}
+            Default {}
+        }
+    }
+    return $Result
+}
+
+function Get-CfgEvalStateDescription {
+    # https://msdn.microsoft.com/en-us/library/jj874279.aspx
+    Param($EvaluationState)
+
+    Switch ($EvaluationState) {
+        0 {'No state information is available.'}
+        1 {'Application is enforced to desired/resolved state.'}
+        2 {'Application is not required on the client.'}
+        3 {'Application is available for enforcement (install or uninstall based on resolved state). Content may/may not have been downloaded.'}
+        4 {'Application last failed to enforce (install/uninstall).'}
+        5 {'Application is currently waiting for content download to complete.'}
+        6 {'Application is currently waiting for content download to complete.'}
+        7 {'Application is currently waiting for its dependencies to download.'}
+        8 {'Application is currently waiting for a service (maintenance) window.'}
+        9 {'Application is currently waiting for a previously pending reboot.'}
+        10 {'Application is currently waiting for serialized enforcement.'}
+        11 {'Application is currently enforcing dependencies.'}
+        12 {'Application is currently enforcing.'}
+        13 {'Application install/uninstall enforced and soft reboot is pending.'}
+        14 {'Application installed/uninstalled and hard reboot is pending.'}
+        15 {'Update is available but pending installation.'}
+        16 {'Application failed to evaluate.'}
+        17 {'Application is currently waiting for an active user session to enforce.'}
+        18 {'Application is currently waiting for all users to logoff.'}
+        19 {'Application is currently waiting for a user logon.'}
+        20 {'Application in progress, waiting for retry.'}
+        21 {'Application is waiting for presentation mode to be switched off.'}
+        22 {'Application is pre-downloading content (downloading outside of install job).'}
+        23 {'Application is pre-downloading dependent content (downloading outside of install job).'}
+        24 {'Application download failed (downloading during install job).'}
+        25 {'Application pre-downloading failed (downloading outside of install job).'}
+        26 {'Download success (downloading during install job).'}
+        27 {'Post-enforce evaluation.'}
+        28 {'Waiting for network connectivity.'}
+    }
+}
+
+function Get-CfgApplicationState {
+    [CmdLetBinding()]
+    Param(
+        [Parameter(
+            Mandatory=$True,
+            ValueFromPipeline=$True,
+            ValueFromPipelineByPropertyName=$True)]$ComputerName=$env:computername,
+        $AppName
+    )
+    
+        Begin {
+            $defaultProperties = @('ComputerName','AppName','InstallState','State')
+            $defaultDisplayPropertySet = 
+                New-Object System.Management.Automation.PSPropertySet(
+                    'DefaultDisplayPropertySet',[string[]]$defaultProperties)
+            $PSStandardMembers = 
+                [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
+        }
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $Computer.ComputerName
+        }
+        $WinRMState = Set-CfgService -ComputerName $ComputerName -Name WinRM
+        $AppObj = Get-CimInstance -ComputerName $ComputerName `
+            -NameSpace root\ccm\ClientSDK -Query $Query
+        if ($AppName) {
+            $AppObj = $AppObj | Where-Object { $psItem.FullName -match $AppName }
+        }
+        $AppObj | ForEach-Object {
+            $psItem | Add-Member `
+                -MemberType NoteProperty `
+                -Name State `
+                -Value (Get-CfgEvalStateDescription $psItem.EvaluationState) 
+            $psItem | Add-Member `
+                -MemberType MemberSet `
+                -Name PSStandardMembers $PSStandardMembers `
+                -PassThru
+        }
+
+    }
+}
+
+function Get-PendingUpdates {
+    <#
+    .SYNOPSIS
+        Show the status of pending updates on an SCCM Client
+    .DESCRIPTION
+        Using the clientsdk and wmi, translate the pending updates to 
+        something little more readble.
+    .PARAMETER ComputerName
+        Specify the computer to connect to to read update data.
+    .EXAMPLE
+        Get-CfgCollectionMembers "MW - Windows Server Patch" | Get-PendingUpdates
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    Param([Parameter(
+                ValueFromPipeline=$True,
+                ValueFromPipelineByPropertyName=$True
+         )]$ComputerName)
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $ComputerName.ComputerName
+        }
+        $WMIParams = @{
+            ComputerName = $ComputerName
+            Namespace = 'root\ccm\ClientSDK'
+            Class = 'CCM_SoftwareUpdate'
+        }
+        $ErrorActionPreference = 'Stop'
+        Try {
+            Get-WMIObject @WMIParams | ForEach-Object {
+                [PSCustomObject]@{
+                    ComputerName = $ComputerName
+                    Status = Switch ($_.EvaluationState) {
+                        1 {"Available"}
+                        2 {"Submitted" }
+                        3 {"Detecting"}
+                        4 {"PreDownload"}
+                        5 {"Downloading"}
+                        6 {"Waiting to install"}
+                        7 {"Installing"}
+                        8 {"Pending Soft Reboot"}
+                        9 {"Pending Hard Reboot"}
+                        10 {"Wait Reboot"}
+                        11 {"Verifying"}
+                        12 {"Install complete"}
+                        13 {"Error"}
+                        14 {"Waiting for service window"}
+                        15 {"Waiting for user logon"}
+                        16 {"Waiting for user logoff"}
+                        17 {"Wait job user logon"}
+                        18 {"Waiting for user reconnect"}
+                        19 {"Pending user logoff"}
+                        20 {"Pending update"}
+                        21 {"Waiting retry"}
+                        22 {"Waiting for presentation mode off"}
+                        23 {"Wait for orchestration"}
+                    }
+                    MaxRunTime = $_.MaxExecutionTime / 60
+                    Update = $_.Name
+                }
+            }
+        } catch {
+            Write-Warning "Could not connect to $ComputerName"
+        }
+    }
+}
+
+function Install-PendingUpdates {
+    <#
+    .SYNOPSIS
+        Install pending updates as returned by Get-PendingUpdates
+    .DESCRIPTION
+        Uses the ClientSDK to install pending updates
+    .PARAMETER Update
+        The name or array of names of an update. In the WMI Class these are called 'Name'
+        Get-PendingUpdate returns them as 'Name
+    .PARAMETER ComputerName
+        Specify the computername to get updates for
+    .EXAMPLE
+        This is for you dean.
+        PS> Get-PendingUpdates -ComputerName wst-infadmin03 | Install-PendingUpdates
+    .EXAMPLE
+        PS> Install-PendingUpdates -ComputerName wst-infadmin03 -Update '2020-06 Security Update for Adobe Flash Player for Windows Server 2016 for x64-based Systems (KB4561600)'
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    Param(
+            [Parameter(ValueFromPipelineByPropertyName=$True)]
+            $ComputerName,
+            [Parameter(ValueFromPipelineByPropertyName=$True)]
+            $Update
+        )
+
+    Begin { [System.Management.ManagementObject[]]$Updates = $() }
+
+    Process {
+        # Gather updates to apply
+        If (-Not $Updates) {
+            $AllUpdatesAvailable = Get-WMIObject `
+                -ComputerName $ComputerName `
+                -Namespace root\ccm\clientsdk `
+                -Class CCM_SoftwareUpdate
+        }
+        $Updates += $AllUpdatesAvailable | Where-Object { $_.Name -eq $Update }
+    }
+
+    End {
+        Invoke-WMIMethod -ComputerName $ComputerName `
+            -Namespace root\ccm\ClientSDK `
+            -Class CCM_SoftwareUpdatesManager `
+            -Name InstallUpdates `
+            -ArgumentList $Updates
+    }
+}
+
+function Get-ServiceWindow {
+    <#
+    .SYNOPSIS
+        Show a list of service windows configured on an SCCM Client.
+    .DESCRIPTION
+        Using the clientsdk and wmi, translate the service window lists to
+        something little more readble.
+    .PARAMETER ComputerName
+        Specify the computer to connect to to read service window data.
+    .PARAMETER Type
+        Filter the output to show only maintenance windows of specific type.
+    .EXAMPLE
+        Get-CfgCollectionMembers "MW - Windows Server Patch" | Get-ServiceWindow `
+            -Type 'All Programs'
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    Param([Parameter(
+                ValueFromPipeline=$True,
+                ValueFromPipelineByPropertyName=$True
+         )]$ComputerName,
+            [ValidateSet(
+                'Business hours',
+                'All Programs',
+                'Software update'
+        )]$Type)
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $ComputerName.ComputerName
+        }
+        $WMIParams = @{
+            ComputerName = $ComputerName
+            Namespace = 'root\ccm\ClientSDK'
+            Class = 'CCM_ServiceWindow'
+        }
+        $ErrorActionPreference = 'Stop'
+        Try {
+            Get-WMIObject @WMIParams | ForEach-Object {
+                $Window = [PSCustomObject]@{
+                    ComputerName = $ComputerName
+                    StartTime = $_.ConvertToDateTime($_.StartTime)
+                    EndTime = $_.ConvertToDateTime($_.EndTime)
+                    Duration = [int]($_.Duration/60/60)
+                    Type = Switch ($_.Type) {
+                        1 {"All Programs"}
+                        2 {"Program" }
+                        3 {"Reboot Required"}
+                        4 {"Software Update"}
+                        5 {"OSD"}
+                        6 {"Business hours"}
+                    }
+                }
+                If ($Type -and $Type -eq $Window.Type) {
+                    $Window
+                } elseif (-Not $Type) {
+                    $Window
+                }
+
+            }
+        } catch {
+            Write-Warning "Could not connect to $ComputerName"
+        }
+    }
+
+
+}
+
+function Reset-CfgClientPolicy {
+<#
+    .SYNOPSIS
+        Reset the SCCM Policy of a machine.
+    .DESCRIPTION
+        Using Invoke-WMIMethod, call the ResetPolicy method.
+    .PARAMETER ComputerName
+        Specify the computer to connect to connect to.
+    .EXAMPLE
+        Reset-CfgClientPolicy -ComputerName Blah
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    Param(
+            [Parameter(
+                ValueFromPipeline=$True,
+                ValueFromPipelineByPropertyName=$True
+            )]$ComputerName
+         )
+
+    Process {
+        If ($ComputerName.ComputerName) {
+            $ComputerName = $ComputerName.ComputerName
+        }
+        Invoke-WMIMethod -ComputerName $ComputerName `
+            -Namespace root\ccm -Class SMS_Client `
+            -Name ResetPolicy `
+            -ArgumentList 1
     }
 }

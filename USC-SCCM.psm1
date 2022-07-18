@@ -653,7 +653,8 @@ function Send-CfgTrigger {
           'HWInventory',
           'SCEP',
           'ScanUpdateSource',
-          'SUAssignmentEval'
+          'SUAssignmentEval',
+	  'DataDiscoveryRecord'
           )][string[]]$TriggerName)
 	  
 BEGIN {
@@ -666,6 +667,7 @@ BEGIN {
 		SCEP {'{00000000-0000-0000-0000-000000000221}'}
         ScanUpdateSource {'{00000000-0000-0000-0000-000000000113}'}
         SUAssignmentEval {'{00000000-0000-0000-0000-000000000108}'}
+	DataDiscoveryRecord {'{00000000-0000-0000-0000-000000000003'}
 		Default {'{00000000-0000-0000-0000-000000000021}','{00000000-0000-0000-0000-000000000022}'}
 	}
 }

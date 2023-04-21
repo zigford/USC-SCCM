@@ -2396,7 +2396,8 @@ function Get-CfgApplicationState {
     }
 }
 
-function Get-PendingUpdates {
+function Get-CfgPendingUpdate {
+    [alias("Get-PendingUpdates")]
     <#
     .SYNOPSIS
         Show the status of pending updates on an SCCM Client
@@ -2466,7 +2467,8 @@ function Get-PendingUpdates {
     }
 }
 
-function Install-PendingUpdates {
+function Install-CfgPendingUpdate {
+    [alias("Install-PendingUpdates")]
     <#
     .SYNOPSIS
         Install pending updates as returned by Get-PendingUpdates
@@ -2516,7 +2518,8 @@ function Install-PendingUpdates {
     }
 }
 
-function Get-ServiceWindow {
+function Get-CfgServiceWindow {
+    [alias("Get-ServiceWindow")]
     <#
     .SYNOPSIS
         Show a list of service windows configured on an SCCM Client.

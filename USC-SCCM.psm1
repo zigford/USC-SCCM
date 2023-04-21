@@ -2621,3 +2621,69 @@ function Reset-CfgClientPolicy {
             -ArgumentList 1
     }
 }
+
+function Enable-CfgDebugLogging {
+    <#
+    .SYNOPSIS
+        Enable debug logging on a client machine.
+    .DESCRIPTION
+        Set the appropriate reg keys to enable debug logging on local or remote machine
+    .PARAMETER ComputerName
+        Specify the remote hostname of the computer to target
+    .EXAMPLE
+        PS> Enable-CfgDebugLogging -ComputerName spock
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    [CmdLetBinding(SupportsShouldProcess)]
+    Param($ComputerName=$env:ComputerName)
+    $ScriptBlock = {
+        $RootPath = "HKLM:\Software\Microsoft\CCM\Logging\DebugLogging"
+        If (-Not (Test-Path -Path $RootPath)) {
+            New-Item -Path $RootPath | Out-Null
+        }
+        $Properties = Get-ItemProperty -Path $RootPath
+        If (-Not $Properties.Enabled) {
+            New-ItemProperty -Path $RootPath -Name Enabled -Value True -PropertyType String
+            Get-Service ccmexec | Restart-Service
+        } elseif ($Properties.Enabled -ne "True") {
+            Set-ItemProperty -Path $RootPath -Name Enabled -Value True
+            Get-Service ccmexec | Restart-Service
+        } else {
+            Write-Information "Debuglogging already enabled"
+        }
+    }
+    Invoke-Command @PSBoundParameters -ScriptBlock $ScriptBlock
+}
+
+function Disable-CfgDebugLogging {
+    <#
+    .SYNOPSIS
+        Disable debug logging on a client machine.
+    .DESCRIPTION
+        Set the appropriate reg keys to disable debug logging on local or remote machine
+    .PARAMETER ComputerName
+        Specify the remote hostname of the computer to target
+    .EXAMPLE
+        PS> Disable-CfgDebugLogging -ComputerName spock
+    .NOTES
+        notes
+    .LINK
+        online help
+    #>
+    [CmdLetBinding(SupportsShouldProcess)]
+    Param($ComputerName=$env:ComputerName)
+    $ScriptBlock = {
+        $RootPath = "HKLM:\Software\Microsoft\CCM\Logging\DebugLogging"
+        If (Test-Path -Path $RootPath) {
+            $Properties = Get-ItemProperty -Path $RootPath
+            If ($Properties.Enabled -and $Properties.Enabled -eq "True") {
+                Set-ItemProperty -Path $RootPath -Name Enabled -Value False
+                Get-Service ccmexec | Restart-Service
+            }
+        }
+    }
+    Invoke-Command @PSBoundParameters -ScriptBlock $ScriptBlock
+}
